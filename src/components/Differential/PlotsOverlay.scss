@@ -1,0 +1,39 @@
+.PlotWrapper {
+  // padding-top: 10px !important;
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+
+  .PlotContainer {
+    margin-top: 0px !important;
+    padding-top: 0px !important;
+    min-height: 80vh !important;
+
+    .PlotContainerRow {
+      padding-top: 0px !important;
+    }
+    .main {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .Pane1 {
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+    }
+  }
+}
+#PlotsOverlayContainer {
+  width: 100% !important;
+  svg {
+    height: 100% !important;
+    max-height: 70vh !important;
+    width: inherit !important;
+  }
+}
+
+// .PlotsMetafeaturesDimmer {
+//   position: absolute !important;
+//   top: 300px !important;
+//   left: 50% !important;
+//   width: 500px !important;
+// }

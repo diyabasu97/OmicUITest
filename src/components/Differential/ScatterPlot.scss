@@ -1,0 +1,30 @@
+.VolcanoPlotSVG {
+  margin: 0 auto;
+  display: block;
+  cursor: crosshair !important;
+}
+
+.volcanoPlotAxis {
+  pointer-events: none; // allow brush/zoom interactions even over axes
+
+  stroke: #838383;
+  stroke-width: 1;
+}
+
+.volcanoAxisLabel {
+  pointer-events: none; // axis labels should not block brush interactions
+}
+
+// .tick text {
+//   font-size: 13px;
+// }
+
+#VolcanoChart {
+  margin-left: 0px !important;
+  margin-top: 5px !important;
+}
+
+.volcanoPlot-dataPoint {
+  // rapid hover or prop-driven highlight cycles.
+  transition: r 150ms ease-out;
+}

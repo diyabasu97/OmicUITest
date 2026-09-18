@@ -1,0 +1,26 @@
+.BreadcrumbContainer {
+  margin: 0px 10px 5px 10px !important;
+
+  .BreadcrumbLink {
+    color: var(--color-link);
+    font-weight: bold;
+    cursor: pointer !important;
+  }
+
+  .ExternalSiteIcon {
+    margin-left: 10px;
+    height: 20px;
+    width: 20px;
+    cursor: pointer;
+    background: white;
+    border-radius: 50%;
+  }
+
+  .ExternalSiteIcon:hover {
+    transform: scale(1.2);
+  }
+
+  .active {
+    color: var(--color-primary) !important;
+  }
+}

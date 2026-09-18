@@ -1,0 +1,637 @@
+import _ from 'lodash-es';
+import React, { Component } from 'react';
+import { Popup, Dimmer, Loader, Icon } from 'semantic-ui-react';
+
+import { omicNavigatorService } from '../../services/omicNavigator.service';
+import {
+  isNotNANullUndefinedEmptyStringInf,
+  formatNumberForDisplay,
+  splitValue,
+  Linkout,
+} from '../Shared/helpers';
+import './FilteredDifferentialTable.scss';
+import { EZGrid } from '../Shared/QHGrid/index.module.js';
+import {
+  normalizeGridColumns,
+  augmentGridRows,
+} from '../../utilities/gridColumnUtils';
+import { createExcelExportHandler } from '../../utilities/excelExport';
+import CustomEmptyMessage from '../Shared/Templates';
+
+let cancelRequestFPTGetResultsTable = () => {};
+class FilteredDifferentialTable extends Component {
+  state = {
+    filteredTableConfigCols: [],
+    filteredTableData: [],
+    filteredBarcodeData: [],
+    itemsPerPageFilteredDifferentialTable:
+      parseInt(
+        localStorage.getItem('itemsPerPageFilteredDifferentialTable'),
+        10,
+      ) || 10,
+    filteredTableLoading: false,
+    additionalTemplateInfo: [],
+    identifier: null,
+    rowClicked: false,
+  };
+  filteredDifferentialGridRef = React.createRef();
+
+  abortController = null;
+  _firstHeaderEl = null;
+  events = ['dragstart', 'dragover', 'drop', 'dragenter'];
+
+  componentDidMount() {
+    this.getFilteredTableConfigCols(this.props.barcodeSettings.barcodeData);
+  }
+
+  componentDidUpdate(prevProps, prevState) {
+    if (
+      this.props.barcodeSettings.brushedData !==
+        prevProps.barcodeSettings.brushedData ||
+      !_.isEqual(
+        _.sortBy(this.state.filteredBarcodeData),
+        _.sortBy(prevState.filteredBarcodeData),
+      )
+
+      // this.state.filteredBarcodeData !== prevState.filteredBarcodeData
+    ) {
+      this.getTableData();
+    }
+
+    if (
+      this.props.filteredDifferentialFeatureIdKey !==
+      prevProps.filteredDifferentialFeatureIdKey
+    ) {
+      this.setState({
+        additionalTemplateInfo: {},
+        filteredTableLoading: false,
+      });
+    }
+
+    if (this.props.HighlightedProteins !== prevProps.HighlightedProteins) {
+      this.highlightRows(this.props.HighlightedProteins, this.state.rowClicked);
+    }
+
+    if (this.props.selectedProteinId !== prevProps.selectedProteinId) {
+      const { selectedProteinId, HighlightedProteins = [] } = this.props;
+      if (!this.state.rowClicked && selectedProteinId) {
+        this.pageToFeature(selectedProteinId);
+      }
+    }
+
+    if (
+      prevState.filteredTableData !== this.state.filteredTableData ||
+      prevState.filteredTableConfigCols !== this.state.filteredTableConfigCols
+    ) {
+      this.preventDropOnFirstColumn();
+    }
+  }
+
+  /**
+   * Prevents drag and drop operations on the first (checkbox) column of the filtered results table.
+   *
+   * @returns {void} No return value
+   */
+  preventDropOnFirstColumn = () => {
+    const firstHeader = document.querySelector(
+      '.FilteredDifferentialTableDiv table.QHGrid--body thead tr th:nth-child(1)',
+    );
+
+    if (!firstHeader) {
+      return;
+    }
+
+    // If this is the same header we already wired, do nothing
+    if (this._firstHeaderEl === firstHeader) {
+      return;
+    }
+
+    // If we already wired up a different header, remove listeners from it
+    if (this._firstHeaderEl && this._firstHeaderEl !== firstHeader) {
+      this.abortController?.abort();
+    }
+
+    this.abortController = new AbortController();
+    const { signal } = this.abortController;
+
+    const preventDrag = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.type === 'dragover') e.dataTransfer.dropEffect = 'none';
+      return false;
+    };
+
+    this.events.forEach((type) => {
+      firstHeader.addEventListener(type, preventDrag, {
+        capture: true,
+        signal,
+      });
+    });
+
+    this._firstHeaderEl = firstHeader;
+  };
+
+  componentWillUnmount() {
+    this.abortController?.abort();
+    this._firstHeaderEl = null;
+  }
+
+  pageToFeature = (featureToHighlight) => {
+    if (
+      featureToHighlight !== '' &&
+      (!Array.isArray(featureToHighlight) || featureToHighlight.length > 0) &&
+      featureToHighlight !== null
+    ) {
+      const {
+        filteredDifferentialFeatureIdKey,
+        // differentialResults
+      } = this.props;
+      const { itemsPerPageFilteredDifferentialTable } = this.state;
+      const sortedData =
+        this.props.filteredDifferentialGridRef?.current?.qhGridRef.current?.getSortedData() ||
+        null;
+      if (sortedData != null) {
+        const Index = _.findIndex(sortedData, function (p) {
+          return p[filteredDifferentialFeatureIdKey] === featureToHighlight;
+        });
+        const pageNumber = Math.ceil(
+          (Index + 1) / itemsPerPageFilteredDifferentialTable,
+        );
+        if (pageNumber > 0) {
+          this.props.filteredDifferentialGridRef.current.handlePageChange(
+            pageNumber,
+          );
+          // scrollElement(this, 'filteredDifferentialGridRef', 'rowHighlightMax');
+        }
+      }
+    } else {
+      this.props.filteredDifferentialGridRef.current.handlePageChange(1);
+    }
+  };
+
+  getTableData = () => {
+    const brushedMultIds = this.props.barcodeSettings.brushedData.map(
+      (b) => b.featureID,
+    );
+    let filteredDifferentialData = this.state.filteredBarcodeData.filter((d) =>
+      brushedMultIds.includes(d[this.props.filteredDifferentialFeatureIdKey]),
+    );
+    // for sorting, if desired
+    if (filteredDifferentialData.length > 0) {
+      const statToSort =
+        'P.Value' in this.state.filteredBarcodeData[0] ? 'P.Value' : 'P_Value';
+      filteredDifferentialData = filteredDifferentialData.sort(
+        (a, b) => a[statToSort] - b[statToSort],
+      );
+    }
+    this.setState({
+      filteredTableData: augmentGridRows(
+        filteredDifferentialData,
+        this.state.filteredTableConfigCols,
+      ),
+    });
+  };
+
+  getFilteredTableConfigCols = (barcodeData) => {
+    if (this.state.filteredBarcodeData.length > 0) {
+      this.setConfigCols(this.state.filteredBarcodeData, null, true);
+    } else {
+      const key = this.props.plotDataEnrichment.key.split(':');
+      const name = key[0].trim() || '';
+      cancelRequestFPTGetResultsTable();
+      const controller = new AbortController();
+      const cancelToken = controller.signal;
+      cancelRequestFPTGetResultsTable = () => controller.abort();
+      omicNavigatorService
+        .getResultsTable(
+          this.props.enrichmentStudy,
+          this.props.enrichmentModel,
+          name,
+          this.props.enrichmentAnnotation,
+          this.props.enrichmentTerm,
+          null,
+          cancelToken,
+        )
+        .then((filteredDifferentialResults) => {
+          if (filteredDifferentialResults.length > 0) {
+            this.setConfigCols(barcodeData, filteredDifferentialResults, false);
+            this.props.onSetFilteredDifferentialResults(
+              filteredDifferentialResults,
+            );
+          }
+        })
+        .catch((error) => {
+          console.error('Error during getResultsTable', error);
+        });
+    }
+  };
+
+  setConfigCols = (
+    barcodeData,
+    filteredDifferentialResults,
+    dataAlreadyFiltered,
+  ) => {
+    const {
+      enrichmentResultsColumnTooltips,
+      enrichmentModel,
+      enrichmentTest,
+      filteredDifferentialLinkouts,
+      filteredDifferentialFavicons,
+      onHandleDifferentialFeatureIdKey,
+    } = this.props;
+    let data = barcodeData || [...filteredDifferentialResults];
+    const TableValuePopupStyle = {
+      backgroundColor: '2E2E2E',
+      borderBottom: '2px solid var(--color-primary)',
+      color: '#FFF',
+      padding: '1em',
+      maxWidth: '50vw',
+      fontSize: '13px',
+      wordBreak: 'break-all',
+    };
+    let filteredDifferentialAlphanumericFields = [];
+    let filteredDifferentialNumericFields = [];
+    if (filteredDifferentialResults.length < 1) return;
+    // grab first object
+    const firstFullObject =
+      filteredDifferentialResults.length > 0
+        ? [...filteredDifferentialResults][0]
+        : null;
+    // if exists, loop through the values of each property,
+    // find the first real value,
+    // and set the config column types
+    if (firstFullObject) {
+      let allProperties = Object.keys(firstFullObject);
+      const dataCopy = [...filteredDifferentialResults];
+      allProperties.forEach((property) => {
+        // loop through data, one property at a time
+        const notNullObject = dataCopy.find((row) => {
+          // find the first value for that property
+          return isNotNANullUndefinedEmptyStringInf(row[property]);
+        });
+        let notNullValue = null;
+        if (notNullObject) {
+          notNullValue = notNullObject[property] || null;
+          // if the property has a value somewhere in the data
+          if (
+            typeof notNullValue === 'string' ||
+            notNullValue instanceof String
+          ) {
+            // push it to the appropriate field type
+            filteredDifferentialAlphanumericFields.push(property);
+          } else {
+            filteredDifferentialNumericFields.push(property);
+          }
+        } else {
+          // otherwise push it to type numeric
+          filteredDifferentialNumericFields.push(property);
+        }
+      });
+    }
+    const alphanumericTrigger = filteredDifferentialAlphanumericFields[0];
+    let featureID = 'featureID';
+    onHandleDifferentialFeatureIdKey(
+      'filteredDifferentialFeatureIdKey',
+      alphanumericTrigger,
+    );
+    this.setState({ identifier: alphanumericTrigger });
+    if (!dataAlreadyFiltered) {
+      const barcodeMultIds = data.map((b) => b[featureID]);
+      data = filteredDifferentialResults.filter((d) =>
+        barcodeMultIds.includes(d[alphanumericTrigger]),
+      );
+    }
+    const filteredDifferentialAlphanumericColumnsMapped =
+      filteredDifferentialAlphanumericFields.map((f) => {
+        return {
+          title: f,
+          headerAttributes: {
+            title:
+              enrichmentResultsColumnTooltips?.[enrichmentModel]?.[
+                enrichmentTest
+              ]?.[f] || null,
+          },
+          field: f,
+          filterable: { type: 'multiFilter' },
+          template: (value, item) => {
+            const keyVar = `${item[f]}-${item[alphanumericTrigger]}`;
+            const filteredDifferentialLinkoutsKeys = Object.keys(
+              filteredDifferentialLinkouts,
+            );
+            let linkoutWithIcon = null;
+            if (filteredDifferentialLinkoutsKeys.includes(f)) {
+              if (item[f] != null && item[f] !== '') {
+                const columnLinkoutsObj = filteredDifferentialLinkouts[f];
+                const columnFaviconsObj = filteredDifferentialFavicons[f];
+                const columnLinkoutsIsArray = Array.isArray(columnLinkoutsObj);
+                let favicons = [];
+                if (columnFaviconsObj != null) {
+                  const columnFaviconsIsArray =
+                    Array.isArray(columnFaviconsObj);
+                  favicons = columnFaviconsIsArray
+                    ? columnFaviconsObj
+                    : [columnFaviconsObj];
+                }
+                const linkouts = columnLinkoutsIsArray
+                  ? columnLinkoutsObj
+                  : [columnLinkoutsObj];
+
+                const itemValue = item[f];
+                linkoutWithIcon = (
+                  <Linkout {...{ keyVar, itemValue, linkouts, favicons }} />
+                );
+              }
+            }
+
+            if (f === alphanumericTrigger) {
+              return (
+                <div className="NoSelect">
+                  <Popup
+                    trigger={<span className="">{splitValue(value)}</span>}
+                    style={TableValuePopupStyle}
+                    className="TablePopupValue"
+                    content={value}
+                    inverted
+                    basic
+                  />
+                  {linkoutWithIcon}
+                </div>
+              );
+            } else {
+              return (
+                <div className="NoSelect">
+                  <Popup
+                    trigger={
+                      <span className="NoSelect">{splitValue(value)}</span>
+                    }
+                    style={TableValuePopupStyle}
+                    className="TablePopupValue"
+                    content={value}
+                    inverted
+                    basic
+                  />
+                  {linkoutWithIcon}
+                </div>
+              );
+            }
+          },
+        };
+      });
+    const filteredDifferentialNumericColumnsMapped =
+      filteredDifferentialNumericFields.map((c) => {
+        return {
+          title: c,
+          headerAttributes: {
+            title:
+              enrichmentResultsColumnTooltips?.[enrichmentModel]?.[
+                enrichmentTest
+              ]?.[c] || null,
+          },
+          field: c,
+          type: 'number',
+          filterable: { type: 'numericFilter' },
+          exportTemplate: (value) => (value ? `${value}` : 'N/A'),
+          template: (value, item, addParams) => {
+            return (
+              <p>
+                <Popup
+                  trigger={
+                    <span className="TableValue NoSelect">
+                      {formatNumberForDisplay(value)}
+                    </span>
+                  }
+                  style={TableValuePopupStyle}
+                  className="TablePopupValue"
+                  content={value}
+                  inverted
+                  basic
+                />
+              </p>
+            );
+          },
+        };
+      });
+    // Checkbox column – SAME classes as Differential table
+    const checkboxCol = [
+      {
+        title: '',
+        field: 'select',
+        hideOnExport: true,
+        sortDisabled: true,
+        template: () => (
+          <div className="DifferentialResultsRowCheckboxDiv">
+            <Icon
+              name="square outline"
+              size="large"
+              className="DifferentialResultsRowCheckbox"
+            />
+          </div>
+        ),
+      },
+    ];
+
+    // Checkbox first, then actual data columns
+    const configCols = checkboxCol
+      .concat(filteredDifferentialAlphanumericColumnsMapped)
+      .concat(filteredDifferentialNumericColumnsMapped);
+
+    const normalizedConfigCols = normalizeGridColumns(configCols);
+    const normalizedData = augmentGridRows(data, normalizedConfigCols);
+
+    this.setState(
+      {
+        filteredBarcodeData: normalizedData,
+        filteredTableConfigCols: normalizedConfigCols,
+      },
+      this.getTableData,
+    );
+  };
+
+  rowLevelPropsCalc = (item) => {
+    let className;
+    let id;
+    const { HighlightedProteins = [], selectedProteinId } = this.props;
+    const { filteredDifferentialFeatureIdKey } = this.props;
+
+    const highlightedIds = HighlightedProteins.map((p) => p.featureID);
+    const featureId = item[filteredDifferentialFeatureIdKey];
+    if (highlightedIds.includes(featureId)) {
+      className = 'rowHighlightOther';
+    }
+
+    if (featureId === selectedProteinId) {
+      id = 'rowOutline';
+    }
+
+    return {
+      id,
+      className,
+    };
+  };
+
+  highlightRows = (HighlightedProteins, rowClicked) => {
+    const MaxLine = HighlightedProteins[0] || null;
+    if (MaxLine && !rowClicked) {
+      this.pageToFeature(MaxLine.featureID);
+    }
+    this.setState({ rowClicked: false });
+  };
+
+  handleItemsPerPageChange = (items) => {
+    this.setState({
+      itemsPerPageFilteredDifferentialTable: items,
+    });
+    localStorage.setItem('itemsPerPageFilteredDifferentialTable', items);
+  };
+
+  handleRowClick = (event, item, index) => {
+    this.setState({ rowClicked: true });
+
+    if (item !== null && event?.target?.className !== 'ExternalSiteIcon') {
+      const { filteredDifferentialFeatureIdKey } = this.props;
+      event.stopPropagation();
+
+      const PreviouslyHighlighted = [...(this.props.HighlightedProteins || [])];
+
+      // Checkbox click behaves like CTRL (multi-toggle)
+      const clickedInCheckboxCell =
+        event?.target?.classList?.contains('DifferentialResultsRowCheckbox') ||
+        event?.target?.classList?.contains(
+          'DifferentialResultsRowCheckboxDiv',
+        ) ||
+        event?.target?.innerHTML?.includes('DifferentialResultsRowCheckboxDiv');
+
+      if (event.shiftKey) {
+        const allTableData =
+          this.props.filteredDifferentialGridRef?.current?.qhGridRef.current?.getSortedData() ||
+          [];
+
+        const anchorId = PreviouslyHighlighted[0]?.featureID;
+        const indexMaxProtein = _.findIndex(allTableData, function (d) {
+          return d[filteredDifferentialFeatureIdKey] === anchorId;
+        });
+
+        const sliceFirst = index < indexMaxProtein ? index : indexMaxProtein;
+        const sliceLast = index > indexMaxProtein ? index : indexMaxProtein;
+        const shiftedTableData = allTableData.slice(sliceFirst, sliceLast + 1);
+
+        const shiftedTableDataArray = shiftedTableData.map((d) => {
+          return {
+            featureID: d[filteredDifferentialFeatureIdKey],
+            key: d[filteredDifferentialFeatureIdKey],
+          };
+        });
+
+        this.props.onHandleProteinSelected(shiftedTableDataArray);
+      }
+
+      // CTRL or CHECKBOX = multi-toggle (orange)
+      else if (event.ctrlKey || event.metaKey || clickedInCheckboxCell) {
+        const allTableData =
+          this.props.filteredDifferentialGridRef?.current?.qhGridRef.current?.getSortedData() ||
+          [];
+
+        let selectedTableDataArray = [];
+
+        const alreadyHighlighted = PreviouslyHighlighted.some(
+          (d) => d.featureID === item[filteredDifferentialFeatureIdKey],
+        );
+
+        if (alreadyHighlighted) {
+          selectedTableDataArray = PreviouslyHighlighted.filter(
+            (i) => i.featureID !== item[filteredDifferentialFeatureIdKey],
+          );
+          this.props.onHandleProteinSelected(selectedTableDataArray);
+        } else {
+          const anchorId = PreviouslyHighlighted[0]?.featureID;
+          const indexMaxProtein = _.findIndex(allTableData, function (d) {
+            return d[filteredDifferentialFeatureIdKey] === anchorId;
+          });
+
+          const mappedProtein = {
+            featureID: item[filteredDifferentialFeatureIdKey],
+            key: item[filteredDifferentialFeatureIdKey],
+          };
+
+          const lowerIndexThanMax = index < indexMaxProtein;
+
+          if (lowerIndexThanMax) {
+            PreviouslyHighlighted.unshift(mappedProtein);
+          } else {
+            PreviouslyHighlighted.push(mappedProtein);
+          }
+
+          selectedTableDataArray = [...PreviouslyHighlighted];
+          this.props.onHandleProteinSelected(selectedTableDataArray);
+        }
+      }
+
+      // SIMPLE ROW CLICK = single-select toggle (blue), NO change to multi
+      else {
+        if (this.props.onHandleSingleProteinSelected) {
+          this.props.onHandleSingleProteinSelected(
+            item[filteredDifferentialFeatureIdKey],
+          );
+        }
+      }
+    }
+  };
+
+  render() {
+    const {
+      filteredTableConfigCols,
+      filteredTableData,
+      itemsPerPageFilteredDifferentialTable,
+      filteredTableLoading,
+      additionalTemplateInfo,
+    } = this.state;
+
+    if (!filteredTableLoading) {
+      return (
+        <div
+          className="FilteredDifferentialTableDiv"
+          id="DifferentialResultsTableWrapperCheckboxes"
+        >
+          <EZGrid
+            ref={this.props.filteredDifferentialGridRef}
+            data={filteredTableData}
+            columnsConfig={filteredTableConfigCols}
+            onExcelExport={createExcelExportHandler(
+              `differential-${this.props.enrichmentStudy}-${this.props.enrichmentModel}-${(this.props.plotDataEnrichment.key !== '' && this.props.plotDataEnrichment.key != null ? this.props.plotDataEnrichment.key.split(':')[0] : '') || 'table'}`,
+            )}
+            totalRows={15}
+            // use "differentialRows" for itemsPerPage if you want all results. For dev, keep it lower so rendering is faster
+            itemsPerPage={itemsPerPageFilteredDifferentialTable}
+            onItemsPerPageChange={this.handleItemsPerPageChange}
+            // exportBaseName="Differential_Analysis_Filtered"
+            // quickViews={quickViews}
+            // disableGeneralSearch
+            disableGrouping
+            // disableSort
+            disableColumnVisibilityToggle
+            //disableColumnReorder
+            // disableFilters={false}
+            min-height="5vh"
+            height="auto"
+            additionalTemplateInfo={additionalTemplateInfo}
+            onRowClick={this.handleRowClick}
+            rowLevelPropsCalc={this.rowLevelPropsCalc}
+            emptyMessage={CustomEmptyMessage}
+            disableQuickViewEditing
+            disableQuickViewMenu
+          />
+        </div>
+      );
+    } else {
+      return (
+        <div className="TableLoadingDiv">
+          <Dimmer active inverted>
+            <Loader size="large">Table Loading</Loader>
+          </Dimmer>
+        </div>
+      );
+    }
+  }
+}
+
+export default FilteredDifferentialTable;

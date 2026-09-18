@@ -1,0 +1,247 @@
+.differentialDetailSvgContainer {
+  // height: 100% !important;
+  // width: 100% !important;
+  // margin: 0px 15px 0px 15px !important;
+  margin: 0px !important;
+  display: flex;
+  flex-direction: column;
+
+  .ui.secondary.pointing.menu {
+    margin-left: 35px !important;
+  }
+
+  // .svgSpan {
+  //   height: 100% !important;
+  //   width: 100% !important;
+  // }
+
+  .SVGPlot {
+    min-height: 75vh !important;
+  }
+
+  .DiffTableIcon {
+    // display: none !important;
+    position: absolute !important;
+    top: 0px !important;
+    left: 10px !important;
+    cursor: pointer !important;
+    // color: #1678c2 !important;
+  }
+
+  .NoPlotsMessage {
+    margin: 40px auto !important;
+    width: 300px !important;
+  }
+
+  // Unified plot toolbar row: dropdown(s) left, actions right.
+  .PlotToolbarRow {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 6px 0px 10px 10px;
+  }
+
+  .PlotToolbarLeft {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .PlotToolbarRight {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  // When the dropdown is inside the unified toolbar row, keep it left-justified.
+  .PlotToolbarRow {
+    #svgPlotDropdownSingle,
+    #svgPlotDropdownMulti,
+    #svgPlotDropdownDifferential {
+      left: 0px !important;
+      top: 0px !important;
+      margin-left: 0px !important;
+      margin-top: 0px !important;
+      margin-bottom: 0px !important;
+    }
+  }
+}
+
+.export-svg {
+  // margin: 0px 30px 5px 0px !important;
+  position: absolute !important;
+  right: 0px !important;
+  top: 3px;
+}
+
+// .TwoPlotsDiv {
+//   .DiffTableIcon {
+//     display: inline-block !important;
+//     left: -2px !important;
+//     // right: 75% !important;
+//     cursor: pointer !important;
+//   }
+
+//   .svgContainer {
+//     margin-left: 0px !important;
+//   }
+// }
+
+.ThreePlotsDiv .DiffTableIcon {
+  display: inline-block !important;
+  left: 10px !important;
+  // right: 50% !important;
+  cursor: pointer !important;
+}
+
+.svgPlotDropdown {
+  max-width: fit-content !important;
+  z-index: 5 !important;
+  margin-top: 0px;
+  margin-bottom: 10px !important;
+  margin-left: 40px !important;
+}
+
+.svgPlotDropdownInOverlay {
+  max-width: fit-content !important;
+  z-index: 5 !important;
+  margin: 10px 10px 20px 10px !important;
+}
+
+#svgPlotDropdownDifferential {
+  left: -50px !important;
+  top: 8px;
+  width: fit-content;
+  min-width: 195px !important;
+  max-width: 195px !important;
+  // border-bottom: 2px solid var(--color-link);
+}
+
+#svgPlotDropdownSingle,
+#svgPlotDropdownMulti {
+  left: -35px !important;
+  top: 8px;
+  // border-bottom: 2px solid var(--color-primary);
+}
+
+.VolcanoPlotToggle {
+  position: absolute !important;
+  cursor: pointer !important;
+  z-index: 12 !important;
+  pointer-events: auto !important;
+  border: none !important;
+  border-radius: 0px !important;
+  bottom: 20px !important;
+  margin-left: -15px !important;
+}
+
+.DifferentialPlots .SingleFeaturePlotPane .ui.active.dimmer,
+.DifferentialPlots .MultiFeaturePlotPane .ui.active.dimmer {
+  z-index: 8 !important;
+}
+#VolcanoPlotToggle {
+  margin-left: 0px !important;
+}
+
+// #VolcanoPlotToggleLabel {
+// background-color: var(--color-primary);
+// color: var(--color-white);
+// border: 2px solid var(--color-primary);
+// border-radius: 15px;
+// }
+
+.ClearAllFeatures {
+  background-color: var(--color-primary) !important;
+  color: var(--color-light) !important;
+}
+
+#MoreThanText {
+  margin-left: 20px;
+  font-size: 14px;
+}
+
+.FullScreenPadding {
+  padding-right: 9px !important;
+}
+.DifferentialPlots .SingleFeaturePlotPane,
+.DifferentialPlots .MultiFeaturePlotPane,
+.EnrichmentPlots .SingleFeaturePlotPane,
+.EnrichmentPlots .MultiFeaturePlotPane {
+  padding-top: 0px !important;
+  // padding-right: 0px !important;
+  padding-bottom: 10px !important;
+  padding-left: 25px !important;
+  margin-bottom: 0px !important;
+  border: none !important;
+  min-height: 400px !important;
+}
+
+.PlotTabsContainer {
+  margin-bottom: 0px !important;
+  margin-top: 0px !important;
+  height: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+
+  .item {
+    height: 40px !important;
+    display: flex !important;
+    align-items: center !important;
+    line-height: normal !important;
+    border-bottom-width: 3px !important;
+  }
+
+  a.active.item {
+    border-bottom-style: solid !important;
+    opacity: 1 !important;
+  }
+  // border: 0px !important;
+  a.active:last-child {
+    border-color: var(--color-primary) !important;
+    // border-width: 4px !important;
+  }
+
+  a.active:first-child {
+    border-color: var(--color-link) !important;
+    // border-width: 4px !important;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Export in plot-tab header (Single/Multi Feature) */
+/* -------------------------------------------------------------------------- */
+
+.DifferentialPlots,
+.EnrichmentPlots {
+  position: relative; /* anchor .PlotTabsExportHost */
+  overflow: visible;
+}
+
+.PlotTabsExportHost {
+  margin: 0;
+  position: absolute;
+  top: 0;
+  right: 14px;
+  height: 40px;
+  z-index: 6; /* keep above tab menu during resize/drag */
+  display: flex;
+  align-items: center;
+  max-width: calc(100% - 250px);
+}
+
+.PlotTabsExportInner {
+  position: static;
+}
+
+/* leave space on the right for the Export button group so the tab text never overlaps */
+.DifferentialPlots .PlotTabsContainer,
+.EnrichmentPlots .PlotTabsContainer {
+  padding-right: 120px !important;
+}

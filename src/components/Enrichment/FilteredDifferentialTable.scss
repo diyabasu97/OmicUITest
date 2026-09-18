@@ -1,0 +1,32 @@
+.FilteredDifferentialTableDiv {
+  direction: ltr !important;
+  // .ui.selectable.table tbody tr:first-child, .ui.selectable.table tbody tr:first-child:hover {
+  //     background: #f14000 !important;
+  //     color: white !important;
+  // }
+  .ui.mini.image {
+    width: 35px !important;
+    //     height: 35px !important;
+  }
+
+  .QHGrid table th:first-child {
+    padding-top: 7px !important;
+    padding-bottom: 15px !important;
+  }
+
+  .TableValue {
+    cursor: auto !important;
+  }
+
+  #rowOutline {
+    border: 3px 3px 3px 3px solid #0066f5 !important;
+    border-top: 3px solid #0066f5 !important;
+    border-right: 3px solid #0066f5 !important;
+    border-bottom: 3px solid #0066f5 !important;
+    border-left: 3px solid var(--color-link) !important;
+  }
+}
+
+.TableLoadingDiv {
+  margin-top: 50px !important;
+}

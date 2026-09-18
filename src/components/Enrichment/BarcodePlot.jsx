@@ -1,0 +1,1284 @@
+import React, { Component } from 'react';
+import ButtonActions from '../Shared/ButtonActions';
+import { Icon, Popup } from 'semantic-ui-react';
+import './BarcodePlot.scss';
+import * as d3 from 'd3';
+import { MIN_DRAG_THRESHOLD_PX } from '../Shared/constants';
+
+class BarcodePlot extends Component {
+  _isMounted = false;
+  _resizeTimer = null;
+  _onWindowResize = null;
+  _keydownHandler = null;
+  _keyupHandler = null;
+  // Current main brush selection in SVG pixel coordinates: [x0, x1]
+  currentBrushSelectionPx = null;
+
+  // Holds the most recent brushed data (features in the brushed window).
+  // Start as null so props-based brushedData can be honored until first brush.
+  lastBrushedData = null;
+
+  // SHIFT+drag "sub-brush" inside the current brush window
+  shiftSubBrushActive = false;
+  shiftSubBrushStartX = null;
+  shiftSubBrushRect = null; // d3 selection of the temporary rect
+  _shiftSubBrushMouseDownCapture = null;
+  _shiftSubBrushMouseMove = null;
+  _shiftSubBrushMouseUp = null;
+
+  state = {
+    switch: 0,
+    barcodeWidth: 0,
+    barcodeContainerWidth: 0,
+    xScale: null,
+    hoveredLineId: null,
+    hoveredLineName: null,
+    highlightedLineName: null,
+    tooltipPosition: null,
+    tooltipPositionMax: null,
+    tooltipTextAnchor: 'start',
+    tooltipTextAnchorMax: 'start',
+    autoMaxAssigned: false,
+    allTooltips: null,
+    displayElementTextBarcode:
+      JSON.parse(sessionStorage.getItem('displayElementTextBarcode')) || false,
+    settings: {
+      // brushing: false,
+      bottomLabel: '',
+      barcodeHeight: 0,
+      margin: {
+        top: 65,
+        right: 40,
+        bottom: 20,
+        left: 20,
+        hovered: 45,
+        selected: 45,
+        highlighted: 30,
+        max: 15,
+      },
+    },
+  };
+
+  barcodeContainerRef = React.createRef();
+
+  barcodeSVGRef = React.createRef();
+
+  componentDidMount() {
+    this._isMounted = true;
+    this.setWidth(true, false);
+
+    // Track modifier keys for cursor feedback.
+    // Avoid React re-renders by toggling CSS classes on the container.
+    const containerEl = document.getElementById('BarcodeChartContainer');
+    const setModifierClass = (ctrlDown, shiftDown) => {
+      if (!containerEl) return;
+      containerEl.classList.toggle('modifier-ctrl', !!ctrlDown);
+      containerEl.classList.toggle('modifier-shift', !!shiftDown);
+    };
+
+    this._keydownHandler = (e) => {
+      setModifierClass(e.ctrlKey || e.metaKey, e.shiftKey);
+    };
+
+    this._keyupHandler = (e) => {
+      // keyup provides the modifier state after release
+      setModifierClass(e.ctrlKey || e.metaKey, e.shiftKey);
+    };
+
+    window.addEventListener('keydown', this._keydownHandler);
+    window.addEventListener('keyup', this._keyupHandler);
+
+    let resizedFn;
+    this._onWindowResize = () => {
+      clearTimeout(this._resizeTimer);
+      this._resizeTimer = setTimeout(() => {
+        if (this._isMounted) this.windowResized();
+      }, 200);
+    };
+    window.addEventListener('resize', this._onWindowResize);
+  }
+
+  /**
+   * Detaches all event listeners and cleans up resources associated with the shift sub-brush feature.
+   *
+   * This method performs a complete teardown of the shift+drag sub-brush interaction by:
+   * 1. Removing all mouse event listeners (mousedown, mousemove, mouseup)
+   * 2. Nullifying listener references to prevent memory leaks
+   * 3. Resetting all sub-brush state flags
+   * 4. Safely removing the temporary sub-brush overlay rectangle from the DOM
+   *
+   * This method is idempotent and safe to call multiple times. It includes defensive checks
+   * to handle cases where listeners or DOM elements may have already been removed.
+   *
+   * @returns {void}
+   * */
+  detachShiftSubBrushListeners() {
+    const svgNode = this.barcodeSVGRef?.current;
+    if (svgNode && this._shiftSubBrushMouseDownCapture) {
+      svgNode.removeEventListener(
+        'mousedown',
+        this._shiftSubBrushMouseDownCapture,
+        true,
+      );
+    }
+    if (this._shiftSubBrushMouseMove) {
+      window.removeEventListener(
+        'mousemove',
+        this._shiftSubBrushMouseMove,
+        true,
+      );
+    }
+    if (this._shiftSubBrushMouseUp) {
+      window.removeEventListener('mouseup', this._shiftSubBrushMouseUp, true);
+    }
+
+    this._shiftSubBrushMouseDownCapture = null;
+    this._shiftSubBrushMouseMove = null;
+    this._shiftSubBrushMouseUp = null;
+
+    this.shiftSubBrushActive = false;
+    this.shiftSubBrushStartX = null;
+    if (this.shiftSubBrushRect) {
+      try {
+        if (this.shiftSubBrushRect && !this.shiftSubBrushRect.empty()) {
+          this.shiftSubBrushRect.remove();
+        }
+      } catch (e) {
+        // no-op
+      }
+      this.shiftSubBrushRect = null;
+    }
+  }
+
+  /**
+   * Attaches event listeners for Shift+drag sub-brush selection.
+   *
+   * This feature allows users to select a sub-range within the current brush
+   * by holding Shift and dragging. The sub-range replaces the multi-selection
+   * (orange) while keeping the main brush window unchanged.
+   *
+   * @param {number} barcodeHeight - Height of the barcode visualization
+   * @throws {Error} If barcodeBrush group is not found (fails gracefully)
+   *
+   * @example
+   * // After brush is initialized
+   * this.attachShiftSubBrushListeners(500);
+   */
+  attachShiftSubBrushListeners(barcodeHeight) {
+    // SHIFT + drag within the *current* brush window:
+    // - draws a temporary sub-range overlay
+    // - replaces orange multi-select with the sub-range (main brush window unchanged)
+    this.detachShiftSubBrushListeners();
+
+    const svgNode = this.barcodeSVGRef?.current;
+    if (!svgNode) return;
+
+    const self = this;
+    const halfHeight = Math.round(barcodeHeight * 0.5);
+
+    const getSvgPoint = (evt) => {
+      const rect = svgNode.getBoundingClientRect();
+      const vb = svgNode.viewBox?.baseVal;
+      const vbWidth = vb?.width || rect.width || 1;
+      const vbHeight = vb?.height || rect.height || 1;
+
+      const x = ((evt.clientX - rect.left) * vbWidth) / (rect.width || 1);
+      const y = ((evt.clientY - rect.top) * vbHeight) / (rect.height || 1);
+      return { x, y };
+    };
+
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+    this._shiftSubBrushMouseMove = (evt) => {
+      if (!self.shiftSubBrushActive || self.shiftSubBrushStartX == null) return;
+
+      const { x } = getSvgPoint(evt);
+      const sel = self.currentBrushSelectionPx;
+      if (!sel) return;
+
+      const x0 = clamp(self.shiftSubBrushStartX, sel[0], sel[1]);
+      const x1 = clamp(x, sel[0], sel[1]);
+      const left = Math.min(x0, x1);
+      const right = Math.max(x0, x1);
+
+      if (self.shiftSubBrushRect) {
+        self.shiftSubBrushRect
+          .attr('x', left)
+          .attr('width', Math.max(0, right - left));
+      }
+
+      evt.preventDefault();
+      evt.stopPropagation();
+    };
+
+    this._shiftSubBrushMouseUp = (evt) => {
+      if (!self.shiftSubBrushActive || self.shiftSubBrushStartX == null) return;
+
+      const { x } = getSvgPoint(evt);
+      const sel = self.currentBrushSelectionPx;
+
+      const cleanup = () => {
+        self.shiftSubBrushActive = false;
+        self.shiftSubBrushStartX = null;
+        if (self.shiftSubBrushRect) {
+          self.shiftSubBrushRect.remove();
+          self.shiftSubBrushRect = null;
+        }
+        window.removeEventListener(
+          'mousemove',
+          self._shiftSubBrushMouseMove,
+          true,
+        );
+        window.removeEventListener('mouseup', self._shiftSubBrushMouseUp, true);
+      };
+
+      if (!sel) {
+        cleanup();
+        return;
+      }
+
+      const x0 = clamp(self.shiftSubBrushStartX, sel[0], sel[1]);
+      const x1 = clamp(x, sel[0], sel[1]);
+      const left = Math.min(x0, x1);
+      const right = Math.max(x0, x1);
+
+      // Ignore micro-drags (accidental clicks)
+      if (right - left < MIN_DRAG_THRESHOLD_PX) {
+        cleanup();
+        return;
+      }
+
+      // Replace multi-select with the sub-range, but only within the currently brushed data set.
+      const brushedData =
+        self.lastBrushedData?.length > 0
+          ? self.lastBrushedData
+          : self.props.barcodeSettings?.brushedData || [];
+      const inSubRange = brushedData.filter((d) => {
+        const px = parseFloat(d.x2);
+        return left <= px && px <= right;
+      });
+
+      const nextMulti = inSubRange.map((d) => ({ featureID: d.featureID }));
+
+      if (self.props.onHandleProteinSelected) {
+        self.props.onHandleProteinSelected(nextMulti);
+      }
+
+      cleanup();
+      evt.preventDefault();
+      evt.stopPropagation();
+    };
+
+    this._shiftSubBrushMouseDownCapture = (evt) => {
+      // capture phase so we can prevent D3 brush from handling this gesture
+      if (!evt.shiftKey) return;
+      if (!self.currentBrushSelectionPx) return;
+
+      const { x, y } = getSvgPoint(evt);
+      const sel = self.currentBrushSelectionPx;
+
+      // Only enable inside the current brush window and inside the brush's vertical band
+      if (x < sel[0] || x > sel[1]) return;
+      if (y < 0 || y > halfHeight) return;
+
+      // Start sub-brush
+      self.shiftSubBrushActive = true;
+      self.shiftSubBrushStartX = x;
+
+      // Create/replace the temporary overlay rect within the brush group so it sits above lines.
+      try {
+        const brushGroup = d3.select(svgNode).select('.barcodeBrush');
+        if (brushGroup.empty()) throw new Error('barcodeBrush group missing');
+        brushGroup.selectAll('rect.barcodeShiftSubBrushRect').remove();
+        self.shiftSubBrushRect = brushGroup
+          .append('rect')
+          .attr('class', 'barcodeShiftSubBrushRect')
+          .attr('y', 0)
+          .attr('height', halfHeight)
+          .attr('x', x)
+          .attr('width', 0);
+      } catch (e) {
+        // If anything goes wrong, fail gracefully and do not block the normal brush
+        self.shiftSubBrushActive = false;
+        self.shiftSubBrushStartX = null;
+        self.shiftSubBrushRect = null;
+        return;
+      }
+
+      // Attach move/up listeners for this drag lifecycle
+      window.addEventListener('mousemove', self._shiftSubBrushMouseMove, true);
+      window.addEventListener('mouseup', self._shiftSubBrushMouseUp, true);
+
+      evt.preventDefault();
+      evt.stopPropagation();
+    };
+
+    svgNode.addEventListener(
+      'mousedown',
+      this._shiftSubBrushMouseDownCapture,
+      true,
+    );
+  }
+
+  componentDidUpdate(prevProps, prevState, snapshot) {
+    if (
+      this.props.horizontalSplitPaneSize !== prevProps.horizontalSplitPaneSize
+    ) {
+      this.detachShiftSubBrushListeners();
+      this.setWidth(false, true);
+    }
+
+    const HighlightedProteins = this.props.HighlightedProteins || [];
+    const selectedProteinId = this.props.selectedProteinId;
+    const prevPlotKey = prevProps.plotDataEnrichment?.key || '';
+    const currPlotKey = this.props.plotDataEnrichment?.key || '';
+
+    if (currPlotKey !== prevPlotKey) {
+      this.setState({
+        autoMaxAssigned: false,
+        initialLoad: true,
+        hoveredLineId: null,
+        hoveredLineName: null,
+        highlightedLineName: null,
+        tooltipPositionMax: null,
+        tooltipTextAnchorMax: null,
+      });
+    }
+
+    if (this.props.HighlightedProteins !== prevProps.HighlightedProteins) {
+      d3.selectAll(`.HighlightedLine`)
+        .attr('y1', this.state.settings.margin.selected)
+        .attr('style', 'stroke:#838383;strokeWidth: 1.5;opacity: 0.5')
+        .classed('HighlightedLine', false);
+      d3.selectAll(`.selected`)
+        .attr('y1', this.state.settings.margin.selected)
+        .attr('style', 'stroke:#2c3b78;strokeWidth: 2.5;opacity: 1');
+      if (this.props.HighlightedProteins.length > 0) {
+        const HighlightedProteinsCopy = [...this.props.HighlightedProteins];
+        HighlightedProteinsCopy.forEach((element) => {
+          const lineId = `${element.featureID}`;
+          const OtherHighlighted = d3.select(
+            `line[id='barcode-line-${lineId}']`,
+          );
+          if (!OtherHighlighted.empty()) {
+            OtherHighlighted.classed('HighlightedLine', true)
+              .attr('y1', this.state.settings.margin.highlighted)
+              .attr('style', 'stroke:#ff7e38;stroke-width:3;opacity:1');
+          }
+        });
+      }
+
+      this.setState({
+        hoveredLineId: null,
+        hoveredLineName: null,
+        highlightedLineName: null,
+        tooltipPositionMax: null,
+        tooltipTextAnchorMax: null,
+        initialLoad: false,
+      });
+
+      // Multi changed, but single might still be active → re-apply single style on top
+      if (selectedProteinId) {
+        this.applySingleSelectedStyle(selectedProteinId, HighlightedProteins);
+      }
+    }
+
+    // --- SINGLE-SELECTION (BLUE) UPDATE ---
+    if (selectedProteinId !== prevProps.selectedProteinId) {
+      // Revert previous single-selected line back to its multi/default style
+      this.resetPreviousSingleSelected(
+        prevProps.selectedProteinId,
+        HighlightedProteins,
+      );
+
+      // Apply styling to the new single-selected line (if any)
+      if (selectedProteinId) {
+        this.applySingleSelectedStyle(selectedProteinId, HighlightedProteins);
+      }
+    }
+  }
+
+  /**
+   * Resets the styling of a previously selected line in the barcode plot
+   *
+   * This method removes the single selection styling from a line and applies the
+   * appropriate styling based on its current state (highlighted, brushed, or neither).
+   *
+   * @param {string} prevSelectedId - The ID of the previously selected protein/feature
+   * @param {Array} highlightedProteins - List of currently highlighted proteins
+   * @returns {void} - Returns early if prevSelectedId is falsy or the line doesn't exist
+   */
+  resetPreviousSingleSelected(prevSelectedId, highlightedProteins = []) {
+    if (!prevSelectedId) return;
+
+    const line = d3.select(`line[id='barcode-line-${prevSelectedId}']`);
+    if (line.empty()) return;
+
+    line.classed('SingleSelectedLine', false);
+
+    // Check if this line is still in highlighted proteins
+    const isHighlighted = highlightedProteins.some(
+      (p) => p.featureID === prevSelectedId,
+    );
+
+    // Check if this line is in brushed data
+    const isBrushed = this.props.barcodeSettings.brushedData.some(
+      (item) => item.featureID === prevSelectedId,
+    );
+
+    if (isHighlighted) {
+      // Still highlighted → use orange style
+      line
+        .classed('HighlightedLine', true)
+        .attr('y1', this.state.settings.margin.highlighted)
+        .attr('style', 'stroke:#ff7e38;stroke-width:3;opacity:1');
+    } else if (isBrushed) {
+      // In brushed data but not highlighted → use blue selection style
+      line
+        .classed('selected', true)
+        .attr('y1', this.state.settings.margin.selected)
+        .attr('style', 'stroke:#2c3b78;stroke-width:2.5;opacity:1');
+    } else {
+      // Not in any selection → reset to base grey
+      line
+        .attr('y1', this.state.settings.margin.top)
+        .attr('style', 'stroke:#838383;stroke-width:1.5;opacity:0.5');
+    }
+  }
+
+  /**
+   * Applies styling to a single selected protein line in a barcode visualization.
+   *
+   * @param {string} selectedId - The ID of the selected protein feature to style.
+   * @param {Array} highlightedProteins - An array of proteins that are currently highlighted in the visualization.
+   *                                     Default is an empty array if no proteins are highlighted.
+   * @returns {void} - Returns early if no selectedId is provided or if the line element doesn't exist.
+   *
+   * This method styles a selected protein line in the barcode visualization by:
+   * 1. Adding the 'SingleSelectedLine' CSS class to the line
+   * 2. Setting its vertical position based on margin settings
+   * 3. Applying different styling based on whether the protein is also in the highlighted set:
+   *    - Orange color (#ff7e38) if the protein is also highlighted
+   *    - Blue color (#0066f5) if the protein is only selected but not highlighted
+   * Both styling options use increased stroke width (3.5) and full opacity (1).
+   */
+  applySingleSelectedStyle(selectedId, highlightedProteins = []) {
+    if (!selectedId) return;
+
+    const line = d3.select(`line[id='barcode-line-${selectedId}']`);
+    if (line.empty()) return;
+    const isHighlighted = highlightedProteins.some(
+      (p) => p.featureID === selectedId,
+    );
+
+    line.classed('SingleSelectedLine', true);
+
+    // If it's also part of the multi set, keep its vertical position from multi
+    let y1 = this.state.settings.margin.max;
+    if (isHighlighted) {
+      line
+        .attr('y1', y1)
+        .attr('style', 'stroke:#ff7e38;stroke-width:3.5;opacity:1');
+    } else {
+      line
+        .attr('y1', y1)
+        .attr('style', 'stroke:#0066f5;stroke-width:3.5;opacity:1');
+    }
+  }
+
+  windowResized = () => {
+    this.setWidth(false, true);
+  };
+
+  setWidth = (initialBrush, resized) => {
+    const { settings } = this.state;
+    const containerWidth = this.getWidth();
+    const width = containerWidth - settings.margin.left - settings.margin.right;
+    this.setState({
+      barcodeContainerWidth: containerWidth,
+      barcodeWidth: width,
+    });
+
+    const barcodeHeight =
+      this.props.horizontalSplitPaneSize -
+      this.state.settings.margin.top -
+      this.state.settings.margin.bottom;
+    this.setupBrush(
+      width,
+      barcodeHeight,
+      this.state.settings,
+      initialBrush,
+      resized,
+    );
+  };
+
+  getWidth() {
+    if (this.barcodeContainerRef.current !== null) {
+      return this.barcodeContainerRef.current.parentElement.offsetWidth;
+    }
+    return 1200;
+  }
+
+  handleLineEnter = (event) => {
+    const target = event.currentTarget || event.target;
+    const lineIdMult = target.getAttribute('featureid');
+    const lineName = target.getAttribute('lineid');
+    const lineStatistic = Number(target.getAttribute('statistic'));
+    const x2 = Number(target.getAttribute('x2') || target.getAttribute('x1'));
+    const textAnchor =
+      lineStatistic > this.props.barcodeSettings.highStat / 1.5
+        ? 'end'
+        : 'start';
+    const textPosition = textAnchor === 'end' ? x2 - 5 : x2 + 5;
+    const lineId = `#barcode-line-${lineIdMult}`;
+    const hoveredLine = d3.select(`line[id='barcode-line-${lineIdMult}']`);
+
+    if (hoveredLine.attr('class').endsWith('selected')) {
+      hoveredLine.attr('y1', this.state.settings.margin.selected - 10);
+    } else if (hoveredLine.attr('class').endsWith('SingleSelectedLine')) {
+      hoveredLine.attr('y1', this.state.settings.margin.max);
+    } else if (hoveredLine.attr('class').endsWith('HighlightedLine')) {
+      hoveredLine.attr('y1', this.state.settings.margin.highlighted - 10);
+    } else {
+      hoveredLine
+        .classed('HoveredLine', true)
+        .attr('y1', this.state.settings.margin.hovered);
+    }
+
+    if (lineIdMult !== this.state.highlightedLineName) {
+      this.setState({
+        hoveredLineId: lineId,
+        hoveredLineName: lineName,
+      });
+    }
+    this.setState({
+      tooltipPosition: textPosition,
+      tooltipTextAnchor: textAnchor,
+    });
+  };
+
+  handleLineLeave = () => {
+    const hoveredLine = d3.select(this.state.hoveredLineId);
+    if (!hoveredLine.empty()) {
+      if (hoveredLine.attr('class').endsWith('selected')) {
+        hoveredLine.attr('y1', this.state.settings.margin.selected);
+      } else if (hoveredLine.attr('class').endsWith('SingleSelectedLine')) {
+        hoveredLine.attr('y1', this.state.settings.margin.max);
+      } else if (hoveredLine.attr('class').endsWith('HighlightedLine')) {
+        hoveredLine.attr('y1', this.state.settings.margin.highlighted);
+      } else {
+        hoveredLine
+          .classed('HoveredLine', false)
+          .attr('y1', this.state.settings.margin.top);
+      }
+    }
+
+    this.setState({
+      hoveredLineId: null,
+      hoveredLineName: null,
+      tooltipPosition: null,
+      tooltipTextAnchor: null,
+    });
+  };
+
+  // ========================================
+  // CLICK SELECTION HELPERS
+  // ========================================
+
+  isFeatureInBrushedData = (featureID) => {
+    const brushed =
+      this.lastBrushedData?.length > 0
+        ? this.lastBrushedData
+        : this.props.barcodeSettings?.brushedData || [];
+    return brushed.some((d) => d.featureID === featureID);
+  };
+
+  // TODO: This helper is currently unused in this component.
+  // Purpose: returns brushed feature IDs ordered by their statistic (ascending).
+  // Keep for future deterministic range-selection or remove to reduce clutter.
+  getBrushedFeatureOrder = () => {
+    const brushed = this.props.barcodeSettings?.brushedData || [];
+    // Sort by x-position (statistic) for deterministic range selection
+    return [...brushed]
+      .filter((d) => d?.featureID != null)
+      .sort((a, b) => Number(a.statistic) - Number(b.statistic))
+      .map((d) => d.featureID);
+  };
+
+  buildHighlightedProteinsPayload = (featureIDs) => {
+    const existing = this.props.HighlightedProteins || [];
+    const existingById = new Map(existing.map((p) => [p.featureID, p]));
+    const uniq = [];
+    const seen = new Set();
+
+    featureIDs.forEach((id) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      // Prefer the full object from existing highlighted list, else minimal shape.
+      uniq.push(existingById.get(id) || { featureID: id });
+    });
+
+    return uniq;
+  };
+
+  handleLineClick = (event, lineData) => {
+    const featureID = lineData?.featureID;
+    if (!featureID) return;
+
+    // Only allow clicks on lines within the current brushed data window.
+    if (!this.isFeatureInBrushedData(featureID)) return;
+
+    const isCtrl = event.ctrlKey || event.metaKey;
+
+    // Ctrl/Cmd+Click: toggle multi-selection membership.
+    if (isCtrl) {
+      if (this.props.onHandleProteinSelected) {
+        const current = this.props.HighlightedProteins || [];
+        const exists = current.some((p) => p.featureID === featureID);
+        const nextIds = exists
+          ? current
+              .filter((p) => p.featureID !== featureID)
+              .map((p) => p.featureID)
+          : [...current.map((p) => p.featureID), featureID];
+
+        this.props.onHandleProteinSelected(
+          this.buildHighlightedProteinsPayload(nextIds),
+        );
+      }
+      return;
+    }
+
+    // Plain click: update single selection.
+    if (this.props.onHandleSingleProteinSelected) {
+      this.props.onHandleSingleProteinSelected(featureID);
+    }
+  };
+
+  /**
+   * Handles clicks on the SVG background to clear all active selections.
+   *
+   * This method provides a convenient way for users to deselect all features by clicking
+   * on empty space within the barcode visualization. It clears both multi-selection
+   * (highlighted proteins) and single selection (selected protein), as well as any
+   * active tooltip states.
+   *
+   * @param {MouseEvent} event - The click event triggered on the SVG element
+   * @returns {void}
+   */
+  handleBackgroundClick = (event) => {
+    // Only act on plain clicks (no Ctrl/Shift modifiers held).
+    if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+
+    const target = event.target;
+    const tagName = (target.tagName || '').toLowerCase();
+
+    // Ignore clicks that landed on interactive children:
+    // • <line> elements  – barcode lines (handled by handleLineClick)
+    // • Elements inside the brush group (handles, selection rect, overlay)
+    // • The shift-sub-brush overlay rect
+    if (tagName === 'line') return;
+
+    const classList = target.classList || {};
+    if (
+      classList.contains?.('selection') ||
+      classList.contains?.('handle') ||
+      classList.contains?.('overlay') ||
+      classList.contains?.('barcodeShiftSubBrushRect')
+    ) {
+      return;
+    }
+
+    // Walk up to make sure we're not inside the brush <g> group
+    let el = target;
+    while (el && el !== event.currentTarget) {
+      if (
+        el.classList &&
+        (el.classList.contains('barcodeBrush') ||
+          el.classList.contains('barcodeShiftSubBrushRect'))
+      ) {
+        return;
+      }
+      el = el.parentElement;
+    }
+
+    // Clear hover / tooltip state
+    this.setState({
+      hoveredLineId: null,
+      hoveredLineName: null,
+      highlightedLineName: null,
+      tooltipPosition: null,
+      tooltipTextAnchor: null,
+    });
+
+    // Clear multi-selection (orange highlighted proteins)
+    if (this.props.onHandleProteinSelected) {
+      this.props.onHandleProteinSelected([]);
+    }
+
+    // Clear single selection (blue selected protein)
+    if (this.props.onHandleSingleProteinSelected) {
+      this.props.onHandleSingleProteinSelected(null);
+    }
+  };
+
+  getMaxObject(array) {
+    if (array) {
+      const max = Math.max.apply(
+        Math,
+        array.map(function (o) {
+          return o.statistic;
+        }),
+        5,
+      );
+      const obj = array.find(function (o) {
+        return o.statistic === max;
+      });
+      return obj;
+    }
+  }
+  setupBrush(barcodeWidth, barcodeHeight, settings, initialBrush, resized) {
+    const self = this;
+    self.resized = resized;
+    let objsBrush = {};
+
+    // Ensure we don't accumulate native listeners across re-renders/resizes
+    self.detachShiftSubBrushListeners();
+
+    // Remove existing brushes
+    if (d3.selectAll('.barcodeBrush').nodes().length > 0) {
+      d3.selectAll('.barcodeBrush').remove();
+    }
+
+    objsBrush = d3
+      .brushX()
+      .extent([
+        [settings.margin.left + 4, 0],
+        [barcodeWidth + 15, Math.round(barcodeHeight * 0.5)],
+      ])
+      .on('start', function (event) {
+        if (!self.resized || event.sourceEvent?.composed) {
+          self.setState({
+            highlightedLineName: null,
+            hoveredLineId: null,
+            hoveredLineName: null,
+          });
+        }
+      })
+      .on('brush', function (event) {
+        if (!self.resized || event.sourceEvent?.composed) {
+          const selection = event?.selection || null;
+          self.currentBrushSelectionPx = selection;
+          if (selection != null) {
+            const brushedLines = d3.brushSelection(this);
+            const isBrushed = function (brushedLines, x) {
+              const xMin = brushedLines[0];
+              const xMax = brushedLines[1];
+              return xMin <= x && x <= xMax;
+            };
+
+            const lines = d3.selectAll('line.barcode-line');
+
+            lines.each(function () {
+              const lineSel = d3.select(this);
+              const x = parseFloat(lineSel.attr('x1'));
+              if (!isBrushed(brushedLines, x)) {
+                lineSel
+                  .classed('selectedReference', false)
+                  .classed('selected', false)
+                  .classed('MaxLine', false)
+                  .classed('SingleSelectedLine', false)
+                  .classed('HighlightedLine', false)
+                  .attr('y1', settings.margin.top)
+                  .attr('style', 'stroke:#838383;stroke-width:1.5;opacity:0.5');
+              }
+            });
+
+            // Apply blue style to brushed lines
+            const brushed = lines.filter(function () {
+              const x = parseFloat(d3.select(this).attr('x1'));
+              return isBrushed(brushedLines, x);
+            });
+
+            brushed.each(function () {
+              const lineSel = d3.select(this);
+              const className = lineSel.attr('class') || '';
+              const isSingleSelected = className.includes('SingleSelectedLine');
+              const isHighlighted = className.includes('HighlightedLine');
+
+              if (!isSingleSelected && !isHighlighted) {
+                lineSel
+                  .classed('selectedReference', true)
+                  .classed('selected', true)
+                  .attr('y1', settings.margin.selected)
+                  .attr('style', 'stroke:#2c3b78;stroke-width:2.5;opacity:1');
+              }
+            });
+
+            const brushedArr = brushed._groups[0];
+            const brushedDataVar = brushedArr.map((a) => {
+              const el = a;
+              return {
+                x2: Number(el.getAttribute('x2') || el.getAttribute('x1')),
+                featureID: el.getAttribute('featureid'),
+                lineID: el.getAttribute('lineid'),
+                logFC: el.getAttribute('logfc'),
+                statistic: Number(el.getAttribute('statistic')),
+                class: el.getAttribute('class'),
+              };
+            });
+            const brushedDataTooltips = brushedDataVar.map((line) => {
+              const textAnchor =
+                line.statistic > self.props.barcodeSettings.highStat / 2
+                  ? 'end'
+                  : 'start';
+              var ttPosition = null;
+              if (textAnchor === 'end') {
+                ttPosition = line.x2 - 5;
+              } else {
+                ttPosition = line.x2 + 5;
+              }
+              const fiveLevelSwitch = (self.state.switch + 1) % 5;
+              self.setState({ switch: fiveLevelSwitch });
+              let alternatePosition = 0;
+              if (self.state.switch === 0) {
+                alternatePosition = 0;
+              } else if (self.state.switch === 1) {
+                alternatePosition = 10;
+              } else if (self.state.switch === 2) {
+                alternatePosition = 20;
+              } else if (self.state.switch === 3) {
+                alternatePosition = 30;
+              } else {
+                alternatePosition = 40;
+              }
+
+              return (
+                <text
+                  id={`${line.featureID}-barcodeTooltip`}
+                  key={`${line.featureID}-barcodeTooltip`}
+                  className="BarcodeTooltipText"
+                  transform={`translate(${ttPosition}, ${alternatePosition})rotate(0)`}
+                  fontSize="11px"
+                  textAnchor={textAnchor}
+                  fontFamily="Lato, Helvetica Neue, Arial, Helvetica, sans-serif"
+                >
+                  {line.featureID}
+                </text>
+              );
+            });
+
+            self.lastBrushedData = brushedDataVar;
+
+            self.setState({
+              allTooltips: brushedDataTooltips,
+            });
+
+            self.props.onHandleBarcodeChanges({
+              brushedData: brushedDataVar,
+            });
+          }
+        }
+      })
+      .on('end', function (event) {
+        if (!self.resized || event.sourceEvent?.composed) {
+          const selection = event?.selection || null;
+          self.currentBrushSelectionPx = selection;
+          if (selection != null) {
+            // Use lastBrushedData as fallback because on initial brush the
+            // parent setState from the "brush" event may not have propagated
+            // back as props yet, leaving barcodeSettings.brushedData stale ([]).
+            const brushedData =
+              (self.props.barcodeSettings.brushedData?.length
+                ? self.props.barcodeSettings.brushedData
+                : self.lastBrushedData) || [];
+            const brushedIds = new Set(brushedData.map((d) => d.featureID));
+
+            const HighlightedProteins = self.props.HighlightedProteins || [];
+            const selectedProteinId = self.props.selectedProteinId;
+
+            if (
+              selectedProteinId &&
+              !brushedIds.has(selectedProteinId) &&
+              self.props.onHandleSingleProteinSelected
+            ) {
+              self.props.onHandleSingleProteinSelected(null);
+            }
+
+            if (self.props.onHandleProteinSelected) {
+              const sourceEvent = event?.sourceEvent || {};
+              const isShift = !!sourceEvent.shiftKey;
+
+              if (isShift) {
+                // SHIFT + drag: add brushed items into orange multi-select (do not replace).
+                // Guard: when the user is *moving* the existing brush window (dragging the selection rect),
+                // keep default behavior to avoid accidental multi-select growth.
+                const target = sourceEvent?.target;
+                const isSelectionDrag =
+                  !!target?.classList && target.classList.contains('selection');
+
+                if (isSelectionDrag) {
+                  const filteredMulti = (HighlightedProteins || []).filter(
+                    (p) => brushedIds.has(p.featureID),
+                  );
+                  self.props.onHandleProteinSelected(filteredMulti);
+                } else {
+                  const byId = new Map(
+                    (HighlightedProteins || []).map((p) => [p.featureID, p]),
+                  );
+                  brushedIds.forEach((id) => {
+                    if (!byId.has(id)) {
+                      byId.set(id, { featureID: id });
+                    }
+                  });
+                  self.props.onHandleProteinSelected([...byId.values()]);
+                }
+              } else {
+                // Default: keep multi-select constrained to the brushed window.
+                const filteredMulti = (HighlightedProteins || []).filter((p) =>
+                  brushedIds.has(p.featureID),
+                );
+                self.props.onHandleProteinSelected(filteredMulti);
+              }
+            }
+
+            if (brushedData.length > 0) {
+              const maxLineData = self.getMaxObject(brushedData);
+              if (
+                initialBrush &&
+                self.props.onHandleSingleProteinSelected &&
+                !self.props.selectedProteinId &&
+                !self.state.autoMaxAssigned
+              ) {
+                self.props.onHandleSingleProteinSelected(maxLineData.featureID);
+                self.setState({
+                  autoMaxAssigned: true,
+                });
+              } else if (self.props.selectedProteinId) {
+                self.applySingleSelectedStyle(
+                  self.props.selectedProteinId,
+                  self.props.HighlightedProteins || [],
+                );
+              }
+            } else {
+              if (self.props.onHandleProteinSelected) {
+                self.props.onHandleProteinSelected([]);
+              }
+              if (self.props.onHandleSingleProteinSelected) {
+                self.props.onHandleSingleProteinSelected(null);
+              }
+              self.setState({
+                tooltipPosition: null,
+                tooltipTextAnchor: null,
+                highlightedLineName: null,
+              });
+            }
+          }
+        }
+      });
+
+    d3.selectAll('.x.barcode-axis')
+      .append('g')
+      .attr('class', 'barcodeBrush')
+      .call(objsBrush);
+
+    // Attach capture listeners for SHIFT sub-brush (must happen after the brush group exists)
+    self.attachShiftSubBrushListeners(barcodeHeight);
+
+    if (initialBrush) {
+      const quartileTicks = d3.selectAll('line').filter(function () {
+        return d3.select(this).attr('id');
+      });
+      const quartile = Math.round(quartileTicks.nodes().length * 0.25);
+      setTimeout(function () {
+        d3.select('.barcodeBrush').call([objsBrush][0].move, [
+          quartileTicks.nodes()[quartile]?.getAttribute('x1'),
+          quartileTicks.nodes()[0]?.getAttribute('x1'),
+        ]);
+      }, 500);
+      d3.select('.barcodeBrush rect.overlay').remove();
+    } else {
+      // reposition the brushed rect on window resize, or horizontal pane resize
+      const selectedTicks = d3.selectAll('line').filter(function () {
+        return d3.select(this).classed('selectedReference');
+      });
+      const highestTickIndex = selectedTicks.nodes().length - 1;
+      if (highestTickIndex >= 0) {
+        d3.select('.barcodeBrush').call([objsBrush][0].move, [
+          selectedTicks.nodes()[highestTickIndex].getAttribute('x1'),
+          selectedTicks.nodes()[0].getAttribute('x1'),
+        ]);
+      }
+      d3.select('.barcodeBrush rect.overlay').remove();
+    }
+  }
+
+  getTooltip = () => {
+    const { hoveredLineName, tooltipPosition, tooltipTextAnchor } = this.state;
+    if (tooltipPosition && hoveredLineName) {
+      return (
+        <text
+          className="BarcodeTooltipText"
+          transform={`translate(${tooltipPosition}, 13)`}
+          fontSize="14px"
+          textAnchor={tooltipTextAnchor || 'end'}
+          fontFamily="Lato, Helvetica Neue, Arial, Helvetica, sans-serif"
+        >
+          {hoveredLineName}
+        </text>
+      );
+    }
+    return null;
+  };
+
+  getSingleSelectedTooltip = () => {
+    const { selectedProteinId } = this.props;
+    if (!selectedProteinId) return null;
+
+    // Find the line and get its information
+    const line = d3.select(`line[id='barcode-line-${selectedProteinId}']`);
+    if (line.empty()) return null;
+
+    const featureName = line.attr('lineid');
+    const xPosition = line.attr('x2');
+    const statistic = line.attr('statistic');
+
+    // Calculate text anchor position similar to tooltip
+    const textAnchor =
+      statistic > this.props.barcodeSettings.highStat / 2 ? 'end' : 'start';
+    const ttPosition = textAnchor === 'end' ? xPosition - 5 : +xPosition + 5;
+
+    return (
+      <text
+        className="BarcodeTooltipText"
+        transform={`translate(${ttPosition}, 15)`}
+        fontSize="14px"
+        textAnchor={textAnchor}
+        fontFamily="Lato, Helvetica Neue, Arial, Helvetica, sans-serif"
+      >
+        {featureName}
+      </text>
+    );
+  };
+
+  handleElementTextChange = () => {
+    sessionStorage.setItem(
+      'displayElementTextBarcode',
+      !this.state.displayElementTextBarcode,
+    );
+    this.setState((prevState) => ({
+      displayElementTextBarcode: !prevState.displayElementTextBarcode,
+    }));
+  };
+  componentWillUnmount() {
+    this._isMounted = false;
+
+    this.detachShiftSubBrushListeners();
+
+    if (this._onWindowResize) {
+      window.removeEventListener('resize', this._onWindowResize);
+      this._onWindowResize = null;
+    }
+    if (this._resizeTimer) {
+      clearTimeout(this._resizeTimer);
+      this._resizeTimer = null;
+    }
+
+    if (this._keydownHandler) {
+      window.removeEventListener('keydown', this._keydownHandler);
+      this._keydownHandler = null;
+    }
+    if (this._keyupHandler) {
+      window.removeEventListener('keyup', this._keyupHandler);
+      this._keyupHandler = null;
+    }
+  }
+
+  render() {
+    const {
+      barcodeWidth,
+      barcodeContainerWidth,
+      settings,
+      allTooltips,
+      displayElementTextBarcode,
+    } = this.state;
+
+    const { horizontalSplitPaneSize, barcodeSettings } = this.props;
+
+    const barcodeHeight =
+      horizontalSplitPaneSize - settings.margin.top - settings.margin.bottom;
+
+    const xScale = d3
+      .scaleLinear()
+      .domain([barcodeSettings.lowStat, barcodeSettings.highStat])
+      .range([5, barcodeWidth - 5]);
+
+    const xAxisTicks = xScale.ticks().map((value) => ({
+      value,
+      xOffset: xScale(value),
+    }));
+    const barcodeTicks = xAxisTicks.map(({ value, xOffset }) => (
+      <g
+        key={value}
+        className="individualTick"
+        transform={`translate(${xOffset + 20}, ${barcodeHeight})`}
+      >
+        <line y2="8" stroke="currentColor" />
+        <text
+          key={value}
+          style={{
+            fontSize: '12px',
+            textAnchor: 'middle',
+            transform: 'translateY(20px)',
+            fontFamily: 'Lato, Helvetica Neue, Arial, Helvetica, sans-serif',
+          }}
+        >
+          {value}
+        </text>
+      </g>
+    ));
+    const brushedIdSet = new Set(
+      (barcodeSettings.brushedData || []).map((d) => d.featureID),
+    );
+
+    // example data:
+    // featureDisplay: "RPL24_T83"
+    // featureEnrichment: "RPL24"
+    // featureID: "17747_1"
+    // logFoldChange: 0
+    // statistic: 19.0484
+    const barcodeLines = barcodeSettings.barcodeData?.map((d) => (
+      <line
+        id={`barcode-line-${d.featureID}`}
+        className="barcode-line"
+        style={{
+          stroke: '#838383',
+          strokeWidth: 1.5,
+          opacity: 0.5,
+          cursor: brushedIdSet.has(d.featureID) ? 'pointer' : 'not-allowed',
+        }}
+        key={`${d.featureID}`}
+        x1={xScale(d.statistic) + settings.margin.left}
+        x2={xScale(d.statistic) + settings.margin.left}
+        y1={settings.margin.top}
+        y2={barcodeHeight}
+        featureid={d.featureID}
+        lineid={d.featureDisplay}
+        logfc={d.logFoldChange}
+        statistic={d.statistic}
+        onMouseEnter={(e) => this.handleLineEnter(e)}
+        onMouseLeave={this.handleLineLeave}
+        onClick={(e) => this.handleLineClick(e, d)}
+        // cursor="crosshair"
+      />
+    ));
+
+    const tooltip = this.getTooltip();
+    const maxTooltip = this.getSingleSelectedTooltip();
+    return (
+      <div ref={this.barcodeContainerRef} id="BarcodeChartContainer">
+        <div className="export-container">
+          <ButtonActions
+            exportButtonSize={'mini'}
+            excelVisible={false}
+            pngVisible={true}
+            pdfVisible={false}
+            svgVisible={true}
+            txtVisible={false}
+            plot="BarcodeChart"
+            description={this.props.plotDataEnrichment.key}
+          />
+        </div>
+        <span className="TextToggleButton">
+          <Popup
+            trigger={
+              <Icon
+                name="font"
+                size="small"
+                inverted
+                circular
+                onClick={this.handleElementTextChange}
+                id={displayElementTextBarcode ? 'PrimaryBackground' : 'black'}
+              />
+            }
+            style={{
+              backgroundColor: '#2E2E2E',
+              borderBottom: '2px solid var(--color-primary)',
+              color: '#FFF',
+              padding: '1em',
+              fontSize: '13px',
+            }}
+            className=""
+            position="bottom center"
+            basic
+            content={displayElementTextBarcode ? 'Hide Labels' : 'Show Labels'}
+          />
+        </span>
+        <svg
+          ref={this.barcodeSVGRef}
+          id="BarcodeChart"
+          height={horizontalSplitPaneSize}
+          width={barcodeContainerWidth}
+          viewBox={`0 0 ${barcodeContainerWidth} ${horizontalSplitPaneSize}`}
+          preserveAspectRatio="xMinYMin meet"
+          onClick={this.handleBackgroundClick}
+        >
+          {/* X Axis */}
+          <path
+            d={`M 25 ${barcodeHeight} H ${barcodeWidth + 15}`}
+            stroke="currentColor"
+          />
+          {/* X Axis Ticks */}
+          {barcodeTicks}
+          {/* X Axis Label */}
+          <text
+            className="BarcodeLabel"
+            fontWeight={600}
+            fontSize={15}
+            transform={`translate(${barcodeWidth / 2}, ${barcodeHeight + 35})`}
+            textAnchor="middle"
+            fontFamily="Lato, Helvetica Neue, Arial, Helvetica, sans-serif"
+          >
+            {barcodeSettings.statLabel}
+          </text>
+          {/* Semantic UI Button */}
+          {/* <div
+        x="-100"
+        y="15"> */}
+
+          {/* </div> */}
+          {/* Y Axis Left Label */}
+          <text
+            className="BarcodeLabel"
+            fontWeight={600}
+            fontSize={15}
+            transform="rotate(-90)"
+            y={15}
+            x={-barcodeHeight}
+            fontFamily="Lato, Helvetica Neue, Arial, Helvetica, sans-serif"
+          >
+            {barcodeSettings.lowLabel}
+          </text>
+          {/* Y Axis Right Label */}
+          <text
+            className="BarcodeLabel"
+            fontWeight={600}
+            fontSize={15}
+            transform="rotate(-90)"
+            y={barcodeWidth + 27}
+            x={-barcodeHeight}
+            fontFamily="Lato, Helvetica Neue, Arial, Helvetica, sans-serif"
+          >
+            {barcodeSettings.highLabel}
+          </text>
+          <g className="x barcode-axis" />
+          {/* Barcode Lines & Tooltip */}
+          {barcodeLines}
+          {tooltip}
+          {displayElementTextBarcode ? allTooltips : maxTooltip}
+        </svg>
+      </div>
+    );
+  }
+}
+
+export default BarcodePlot;

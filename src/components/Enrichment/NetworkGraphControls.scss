@@ -1,0 +1,451 @@
+.NetworkGraphContainer {
+  margin-top: 10px;
+  padding-top: 0px !important;
+  padding: 0px !important;
+  min-height: 70vh !important;
+
+  text {
+    font-family: 'Lato', 'Helvetica Neue', Arial, Helvetica, sans-serif !important;
+    font-size: 10px;
+  }
+}
+
+@media (min-width: 2700px) {
+  .NetworkGraphContainer {
+    margin-top: -15px !important;
+  }
+}
+
+.NetworkGraphFiltersRow {
+  margin-top: 11px !important;
+  padding-bottom: 0px !important;
+}
+
+.ui.positive.button {
+  background-color: var(--color-primary) !important;
+}
+
+.ui.search > .results {
+  padding-bottom: 60px;
+  max-height: 75vh !important;
+  overflow-y: scroll !important;
+}
+
+#NetworkSearchInput {
+  max-width: 200px;
+  border-radius: 0.28571429rem !important;
+}
+
+@media (min-width: 1500px) {
+  #NetworkSearchInputColumn {
+    padding-left: 0px !important;
+  }
+}
+
+@media (min-width: 300px) and (max-width: 767px) {
+  #NetworkSearchInputColumn div {
+    float: right;
+  }
+}
+
+@media (min-width: 992px) and (max-width: 1199px) {
+  #NetworkSearchInputColumn div {
+    float: right;
+  }
+}
+
+@media (min-width: 300px) and (max-width: 374px) {
+  #NetworkSearchInput {
+    max-width: 140px !important;
+  }
+}
+@media (min-width: 768px) and (max-width: 1199px) {
+  #NetworkSearchInput {
+    max-width: 200px !important;
+  }
+}
+@media (min-width: 1200px) and (max-width: 1299px) {
+  #NetworkSearchInput {
+    max-width: 110px !important;
+  }
+}
+@media (min-width: 1300px) and (max-width: 1399px) {
+  #NetworkSearchInput {
+    max-width: 120px !important;
+  }
+}
+@media (min-width: 1400px) and (max-width: 1499px) {
+  #NetworkSearchInput {
+    max-width: 140px !important;
+  }
+}
+@media (min-width: 1500px) and (max-width: 1598px) {
+  #NetworkSearchInput {
+    max-width: 155px !important;
+  }
+}
+@media (min-width: 1599px) and (max-width: 1699px) {
+  #NetworkSearchInput {
+    max-width: 160px !important;
+  }
+}
+@media (min-width: 1700px) and (max-width: 1799px) {
+  #NetworkSearchInput {
+    max-width: 175px !important;
+  }
+}
+@media (min-width: 1800px) and (max-width: 1999px) {
+  #NetworkSearchInput {
+    max-width: 190px !important;
+  }
+}
+@media (min-width: 2300px) {
+  #NetworkSearchInput {
+    max-width: 250px !important;
+  }
+}
+
+.semantic_ui_range_inner {
+  margin-left: 0px !important;
+}
+
+.semantic_ui_range_inner div:nth-of-type(2) {
+  background-color: var(--color-primary) !important;
+}
+
+.NetworkSortIcon {
+  background: white !important;
+  color: grey !important;
+  opacity: 1 !important;
+  border: 1px solid lightgrey;
+}
+
+.networkSearch {
+  margin: 5px 5px 5px 5px;
+  border-radius: 3px;
+  outline-width: 1px;
+  outline-color: 'blue';
+  font-family: 'Lato', 'Helvetica Neue', Arial, Helvetica, sans-serif !important;
+  width: 75%;
+}
+
+.RadioLabelsDisplay {
+  margin-left: 40px;
+  font-size: 1rem !important;
+
+  //   .ui.toggle.checkbox input:checked ~ .box:before,
+  //   .ui.toggle.checkbox input:checked ~ label:before {
+  //     background-color: var(--color-primary) !important;
+  //   }
+}
+
+@media (max-width: 1598px) {
+  .RadioLabelsDisplay {
+    font-size: 0.9rem !important;
+  }
+}
+
+.NetworkSliderDiv {
+  margin: 0 auto !important;
+  margin-top: 8px !important;
+  margin-bottom: 5px !important;
+  max-width: 135px;
+}
+
+@media (min-width: 2000px) {
+  .NetworkSliderDiv {
+    max-width: 190px !important;
+  }
+}
+
+#NetworkSliderDivLinkType {
+  margin-top: 0px !important;
+  padding-top: 0px !important;
+  margin-bottom: 3px !important;
+  padding-bottom: 0px !important;
+}
+
+@media (min-width: 1599px) {
+  #NetworkSliderDivLinkType {
+    margin-top: 5px !important;
+  }
+}
+
+.thumb:active,
+.thumb:focus {
+  outline: none !important;
+}
+
+.InlineFlex {
+  display: inline-flex;
+  flex-direction: row;
+  margin-bottom: 10px;
+}
+
+.LinkTypeContainer {
+  margin-bottom: -10px !important;
+}
+
+@media (min-width: 493px) {
+  #LinkTypeLabelColumn {
+    width: 45% !important;
+  }
+  #LinkTextContainer {
+    width: 55% !important;
+  }
+}
+
+@media (min-width: 1200px) and (max-width: 1250px) {
+  #LinkTypeLabelColumn {
+    width: 43% !important;
+  }
+  #LinkTextContainer {
+    width: 57% !important;
+  }
+}
+
+#LinkTextContainer {
+  padding-right: 0px !important;
+  padding-left: 0px !important;
+}
+
+.NetworkSliderInput {
+  font-family: 'Lato', 'Helvetica Neue', Arial, Helvetica, sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 500;
+  height: 40px !important;
+  width: 70px !important;
+  padding-left: 10px !important;
+}
+
+@media (min-width: 1599px) and (max-width: 2599px) {
+  .NetworkSliderInput {
+    font-size: 15px !important;
+    height: 50px !important;
+  }
+}
+
+@media (min-width: 2600px) {
+  .NetworkSliderInput {
+    font-size: 20px !important;
+    height: 54px !important;
+  }
+}
+
+.NetworkSlider {
+  width: 100% !important;
+}
+
+.ValueNowNode {
+  color: var(--color-dark) !important;
+  margin-right: -95px;
+}
+
+.ValueNowLinkTypeOverlapText,
+.ValueNowLinkTypeOverlapNumber {
+  color: var(--color-dark) !important;
+  margin-left: 35px;
+  font-size: 13px;
+  font-weight: bold;
+  font-style: italic;
+}
+
+.ValueNowLinkTypeJaccardText,
+.ValueNowLinkTypeJaccardNumber {
+  color: var(--color-dark) !important;
+  // color: var(--color-white) !important;
+  margin-left: -45px;
+  font-size: 13px;
+  font-weight: bold;
+  font-style: italic;
+}
+
+.LinkTypeText {
+  font-size: 13px !important;
+}
+
+@media (min-width: 1599px) {
+  .LinkTypeText {
+    font-size: 15px !important;
+  }
+}
+
+#JaccardPercent {
+  color: var(--color-white);
+  background-color: var(--color-primary);
+}
+.DisplayOnLarge {
+  display: none !important;
+}
+
+@media (min-width: 2000px) {
+  .DisplayOnLarge {
+    display: inline !important;
+  }
+}
+
+.DisplayOnSmaller {
+  display: inline !important;
+}
+
+@media (min-width: 1920px) {
+  .DisplayOnSmaller {
+    display: none !important;
+  }
+}
+
+.NetworkInputLabel {
+  margin-right: -1px !important;
+  width: max-content;
+  border-radius: 0.28571429rem 0px 0px 0.28571429rem !important;
+  background-color: var(--color-dark) !important;
+  color: var(--color-light) !important;
+  display: inline-block !important;
+  text-align: left;
+  cursor: pointer !important;
+}
+
+@media (max-width: 1598px) {
+  .NetworkInputLabel {
+    line-height: 1.2 !important;
+  }
+}
+
+@media (min-width: 1599px) {
+  .NetworkInputLabel {
+    line-height: 1.4 !important;
+  }
+}
+
+#NetworkGraphSortByDiv {
+  color: var(--color-white) !important;
+
+  #NetworkSortByLabel {
+    background-color: var(--color-dark) !important;
+    color: white !important;
+    text-align: center !important;
+  }
+
+  .ui.menu .item:before {
+    width: 0px;
+  }
+  .ui.menu:last-child {
+    display: inline-flex;
+    /* width: 0px; */
+    border: 1px solid rgba(34, 36, 38, 0.15);
+    box-shadow: none;
+  }
+
+  #NetworkGraphSortByText {
+    color: var(--color-light) !important;
+  }
+  ul {
+    padding: 0px 10px 0px 10px !important;
+  }
+  ul li {
+    list-style: none;
+    margin-bottom: 8px;
+    cursor: grab;
+  }
+
+  .NetworkGraphSortableListLabel {
+    background-color: var(--color-primary);
+    color: var(--color-white);
+  }
+  #NetworkGraphSortableList {
+    list-style: none;
+    margin-bottom: 5px;
+    cursor: grab;
+  }
+}
+
+.LoaderActivePlotsNetwork {
+  height: 100vh !important;
+}
+
+#LegendIconButton {
+  background-color: var(--color-light) !important;
+  color: var(--color-dark) !important;
+}
+
+#LegendColumn {
+  margin-bottom: 5px;
+}
+
+.TotalsSpan {
+  float: right;
+  margin-right: 5px;
+}
+
+#LinkTotalsSpan {
+  margin-right: 30px;
+}
+
+.node-label {
+  pointer-events: none;
+}
+
+.stop-left {
+  stop-color: #e34a33;
+}
+
+.stop-middle {
+  stop-color: #fdbb84;
+}
+
+.stop-right {
+  stop-color: #fee8c8;
+}
+
+#LegendPopup {
+  font-family: 'Lato', 'Helvetica Neue', Arial, Helvetica, sans-serif !important;
+  border-radius: 5px;
+  z-index: 3;
+}
+
+.filled {
+  fill: url(#mainGradient);
+}
+
+.NumericExponentialInputContainer input {
+  width: 70px !important;
+  max-width: 70px !important;
+  font-size: 14px !important;
+  border: 1px solid rgb(204, 204, 204);
+  border-radius: 2px;
+  font-family: 'Lato', 'Helvetica Neue', Arial, Helvetica, sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 500;
+  height: 40px !important;
+  padding-left: 10px !important;
+  padding-right: 0px !important;
+}
+
+@media (min-width: 1599px) and (max-width: 2599px) {
+  .NumericExponentialInputContainer input {
+    font-size: 15px !important;
+    height: 50px !important;
+  }
+}
+
+@media (min-width: 2600px) {
+  .NumericExponentialInputContainer input {
+    font-size: 20px !important;
+    height: 54px !important;
+    max-width: 80px !important;
+    width: 80px !important;
+  }
+}
+
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  opacity: 1 !important;
+  height: 50px !important;
+}
+
+.boldUnhighlighted {
+  text-decoration: none !important;
+  // color: var(--color-primary) !important;
+  color: inherit;
+  font-weight: bold !important;
+}

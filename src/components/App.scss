@@ -1,0 +1,521 @@
+@use './Shared/TableStickyColumns' as *;
+
+:root {
+  // --color-primary: #ff4400;
+  --color-primary: rgba(255, 68, 0, 1);
+  --color-primary-half: rgba(255, 68, 0, 0.5);
+  // --color-primary-gradient: #ff7e38;
+  --color-primary-gradient: rgba(255, 126, 5, 1);
+  --color-secondary: rgba(44, 59, 120, 1);
+  --color-secondary-gradient: #94959c;
+  --color-tertiary: #00aeff;
+  --color-link: rgba(22, 120, 194, 1) !important;
+  --color-link-half: rgba(22, 120, 194, 0.5) !important;
+  --color-white: #fff;
+  --color-light: #e0e1e2;
+  --color-dark: #2e2e2e;
+  --color-grey: grey;
+  --color-gray: #e8e8e8;
+  --color-semantic-grey: #e0e1e2;
+}
+
+.AppContainer {
+  height: 100% !important;
+  overflow: hidden;
+
+  @media (max-width: 1199px) {
+    .deviceMargin {
+      margin: 20px 15px 30px 15px !important;
+    }
+  }
+
+  @media (min-width: 1200px) {
+    .deviceMargin {
+      margin: 0px !important;
+    }
+  }
+
+  .EnrichmentContentContainer {
+    min-height: calc(100vh - 53px) !important;
+    margin-top: 0px !important;
+    padding-left: 20px !important;
+
+    .LoaderContainer {
+      padding-top: 120px;
+    }
+  }
+
+  .DifferentialContentContainer {
+    min-height: calc(100vh - 53px) !important;
+    margin-top: 0px !important;
+    // padding-left: 20px !important;
+
+    .LoaderContainer {
+      padding-top: 120px;
+    }
+  }
+
+  .ActionsRow {
+    margin-top: 15px !important;
+    padding-top: 13px !important;
+  }
+
+  .ChartsContainer {
+    margin-top: 0px !important;
+    padding-top: 0px !important;
+    min-height: 75vh !important;
+  }
+
+  // QH Grid Overrides
+  .QHGrid {
+    padding-top: 0px !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+    padding-bottom: 10px !important;
+    margin-bottom: 10px !important;
+
+    .qh-caption {
+      background-color: var(--color-white) !important;
+      border: none !important;
+    }
+  }
+
+  .QHGrid table thead:hover {
+    border-top: none !important;
+    border-bottom: none !important;
+  }
+
+  .QHGrid table tr th:first-child {
+    background-color: #fff !important;
+    //   padding-right: 0px !important;
+    //   padding-left: 0px !important;
+  }
+
+  .QHGrid table th span {
+    float: right;
+  }
+
+  .QHGrid table {
+    margin-top: 0px !important;
+    border: none !important;
+    thead th {
+      border-bottom: none !important;
+    }
+  }
+
+  #DifferentialResultsTableWrapperCheckboxes {
+    .ui.celled.table tr td:first-child,
+    .ui.celled.table tr th:first-child {
+      min-width: 25px !important;
+      max-width: 35px !important;
+    }
+
+    .ui.celled.table tr td:first-child:hover,
+    .ui.celled.table tr th:first-child:hover {
+      cursor: cell;
+      // border-top: 3px solid var(--color-primary-half) !important;
+      // border-top: none !important;
+      // border-bottom: 3px solid var(--color-primary-half) !important;
+      // border-bottom: none !important;
+      color: var(--color-primary-half) !important;
+    }
+    // .ui.celled.table tr td:last-child,
+    // .ui.celled.table tr th:last-child {
+    //   min-width: 40px !important;
+    //   max-width: 40px !important;
+    // }
+
+    .QHGrid table td:not(:first-child):hover {
+      border-top: 3px solid var(--color-link-half) !important;
+      border-bottom: 3px solid var(--color-link-half) !important;
+    }
+
+    .QHGrid table td:not(:first-child):hover ~ td {
+      border-top: 3px solid var(--color-link-half) !important;
+      border-bottom: 3px solid var(--color-link-half) !important;
+    }
+  }
+
+  #DifferentialResultsTableWrapperCheckboxes,
+  #DifferentialResultsTableWrapper {
+    .QHGrid table {
+      border-collapse: collapse;
+      tr {
+        cursor: pointer !important;
+      }
+      .QHGrid--generalSearch:nth-child(1) {
+        margin-left: 0px !important;
+        // margin-top: -3px !important;
+      }
+    }
+  }
+  #DifferentialResultsTableWrapper {
+    .QHGrid table {
+      border-collapse: collapse;
+      tr {
+        cursor: pointer !important;
+      }
+      .QHGrid--generalSearch:nth-child(1) {
+        margin-left: 0px !important;
+        // margin-top: -3px !important;
+      }
+    }
+    .QHGrid table tbody tr:hover {
+      border-top: 3px solid var(--color-link-half) !important;
+      border-bottom: 3px solid var(--color-link-half) !important;
+    }
+  }
+
+  tfoot tr th {
+    border-top: 1px solid grey !important;
+  }
+
+  .QHGrid--body thead tr th {
+    border-top: 1px solid lightgrey !important;
+    border-bottom: 1.5px solid grey !important;
+  }
+
+  // .QHGridHeaderDiv {
+  .QHGridBodyDiv {
+    margin-top: 10px !important;
+  }
+
+  .QHGrid--loading {
+    padding: initial !important;
+    margin: initial !important;
+  }
+
+  .QHGrid--empty {
+    height: auto !important;
+  }
+
+  //icons
+  i.orange.icon {
+    color: var(--color-primary) !important;
+  }
+  i.inverted.orange.icon,
+  i.inverted.bordered.orange.icon,
+  i.inverted.circular.orange.icon {
+    color: #fff !important;
+    // background-color: var(--color-primary) !important;
+  }
+
+  // .ui.toggle.checkbox input:checked ~ .box:before,
+  // .ui.toggle.checkbox input:checked ~ label:before {
+  //   background-color: var(--color-primary) !important;
+  // }
+  // menu
+  .ui.menu .orange.active.item {
+    color: #fff !important;
+    background-color: var(--color-primary) !important;
+    border-width: 3px !important;
+  }
+  .ui.secondary.pointing.menu .item {
+    border-width: 3px !important;
+  }
+
+  #rowOutline {
+    // border: 3px 3px 3px 3px solid var(--color-link) !important;
+    border-top: 3px solid var(--color-link) !important;
+    border-right: 3px solid var(--color-link) !important;
+    border-bottom: 3px solid var(--color-link) !important;
+    border-left: 3px solid var(--color-link) !important;
+  }
+
+  .rowHighlightOther i.icon.square.outline:before {
+    content: '\f14a';
+    color: var(--color-primary) !important;
+  }
+
+  .rowHighlightOther i.icon.square.outline:after {
+    background-color: var(--color-primary);
+  }
+
+  .ui.selectable.table tbody .rowHighlightMax:hover {
+    background: rgba(255, 68, 0, 0.9) !important;
+    color: white !important;
+  }
+
+  .ui.bottom.attached.segment.active.tab {
+    border-bottom: none;
+  }
+
+  .test {
+    color: white !important;
+  }
+
+  .VerticalSidebarPlot {
+    width: 100% !important;
+    background: white;
+    padding-top: 0px !important;
+    padding-left: 0px !important;
+    padding-right: 5px !important;
+  }
+
+  .VerticalSidebarVolcanoView {
+    width: 100% !important;
+    background: white;
+    z-index: 3;
+    padding-right: 25px !important;
+  }
+
+  .ui.visible[class*='very wide'].left.sidebar ~ .pusher {
+    transform: translate3d(105%, 0, 0) !important;
+  }
+
+  .NoSelect {
+    -webkit-touch-callout: none !important; /* iOS Safari */
+    -webkit-user-select: none !important; /* Safari */
+    -khtml-user-select: none !important; /* Konqueror HTML */
+    -moz-user-select: none !important; /* Old versions of Firefox */
+    -ms-user-select: none !important; /* Internet Explorer/Edge */
+    user-select: none !important; /* Non-prefixed version, currently supported by Chrome, Opera and Firefox */
+  }
+
+  .FloatRight {
+    float: right !important;
+    cursor: pointer !important;
+  }
+
+  .FloatLeft {
+    float: left !important;
+  }
+
+  .ShowInlineBlock {
+    display: inline-block !important;
+  }
+
+  .Hide {
+    display: none !important;
+  }
+
+  .ShowBlock {
+    display: block !important;
+  }
+
+  .ui.search.dropdown > .text {
+    display: block !important;
+  }
+
+  .AbsoluteExportDifferential {
+    position: absolute;
+    z-index: 1;
+    margin-top: 13px;
+    right: 9px !important;
+  }
+
+  .AbsoluteMultiSearchDifferential {
+    // position: absolute;
+    // z-index: 1;
+    // margin-top: 13px;
+    // left: 250px !important;
+    float: left;
+    input {
+      min-width: 185px;
+    }
+  }
+
+  .AbsoluteExport {
+    position: absolute;
+    z-index: 1;
+    margin-top: 10px;
+    right: 10px !important;
+  }
+
+  #AppVersion {
+    top: 20px;
+    right: 20px;
+    position: absolute;
+  }
+}
+
+.SortableHelper {
+  z-index: 3;
+  list-style: none;
+}
+
+.TopBar {
+  margin: 0px;
+  margin-bottom: -14px;
+  background-color: var(--color-dark) !important;
+
+  .MenuContainer {
+    margin-bottom: 0px !important;
+
+    a {
+      cursor: pointer !important;
+    }
+
+    .ui.segment[class*='bottom attached'] {
+      margin-bottom: 0rem !important;
+    }
+
+    .active {
+      border-color: var(--color-primary) !important;
+    }
+  }
+
+  .LogoAndTitle {
+    width: 25% !important;
+    padding-left: 35px;
+
+    .LogoElement {
+      padding: 0px !important;
+      margin-right: 10px;
+    }
+
+    .LogoImage {
+      height: 23px;
+    }
+
+    .Header {
+      font-size: 18px !important;
+      margin: 0px !important;
+      padding-top: 0px !important;
+    }
+
+    .HeaderSecond {
+      font-weight: 100 !important;
+      font-style: italic;
+      color: #e0e1e2 !important;
+    }
+
+    #ResetApp {
+      cursor: pointer !important;
+    }
+  }
+}
+
+#HelpButton {
+  margin-left: 10px;
+}
+.CursorPointer {
+  cursor: pointer !important;
+}
+
+.MarginRight {
+  margin-right: 10px;
+}
+
+.ui.modal > .header {
+  background: var(--color-link) !important;
+  color: #fff !important;
+}
+
+.ui.modal > .content > .description {
+  width: 100%;
+}
+
+.PrimaryBackground {
+  background-color: var(--color-primary) !important;
+  color: var(--color-white) !important;
+}
+
+.PrimaryColor {
+  color: var(--color-primary) !important;
+}
+
+.LinkBackground {
+  background-color: var(--color-link) !important;
+  color: var(--color-white) !important;
+}
+
+.FakeDisabled {
+  cursor: default;
+  opacity: 0.45 !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.BottomBar {
+  background-color: var(--color-dark) !important;
+  text-align: center;
+  margin: 0;
+  // margin-top: -15px;
+  padding: 0;
+  height: 53px;
+  #TermsButton {
+    margin: 5px auto;
+    border: none !important;
+    background-color: var(--color-dark) !important;
+    color: var(--color-light) !important;
+    font-size: 18px;
+  }
+}
+
+#SmallScreenOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 1);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  z-index: 999;
+  color: white !important;
+  #SmallScreenLogoImage {
+    height: 46px;
+  }
+
+  #SmallScreenHeaderFirst {
+    font-size: 36px;
+  }
+
+  #SmallScreenHeaderSecond {
+    font-size: 36px;
+    font-weight: 100 !important;
+    font-style: italic;
+    color: #e0e1e2 !important;
+  }
+
+  #SmallScreenText {
+    width: 80%;
+    font-size: 18px !important;
+  }
+}
+
+#AppLoadingOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 1);
+  align-items: center;
+  z-index: 999;
+  color: white !important;
+
+  #AppLoadingLogoDiv {
+    text-align: center;
+    margin-top: 30vh;
+    margin-bottom: 60px;
+    #AppLoadingLogoImage {
+      height: 69px;
+    }
+    #AppLoadingHeaderFirst {
+      vertical-align: super;
+      font-size: 54px;
+    }
+
+    #AppLoadingHeaderSecond {
+      vertical-align: super;
+      font-size: 54px;
+      font-weight: 100 !important;
+      font-style: italic;
+      color: #e0e1e2 !important;
+    }
+  }
+  #AppLoadingText {
+    width: 100%;
+    font-size: 30px !important;
+    text-align: center;
+    color: lightgrey !important;
+  }
+}
+
+// .ui.inverted.popup a {
+//   color: var(--color-primary) !important;
+// }

@@ -1,0 +1,33 @@
+.DifferentialContainer {
+  padding: 0px !important;
+  padding-top: 1px !important;
+  height: auto !important;
+}
+
+.DifferentialContainer ::-webkit-scrollbar {
+  width: 20px !important;
+  height: 20px !important;
+}
+
+.DifferentialContainer ::-webkit-scrollbar-thumb:vertical {
+  box-shadow: 0px 2px 0px var(--color-primary) !important;
+}
+
+.DifferentialContainer ::-webkit-scrollbar-thumb:horizontal {
+  box-shadow: 2px 0px 0px var(--color-primary) !important;
+}
+
+.ui.red.button,
+.ui.red.buttons .button {
+  background-color: var(--color-semantic-grey) !important;
+  color: var(--color-grey) !important;
+  // color: rgba(0, 0, 0, 0.05) !important;
+}
+
+.NoDataMessage {
+  margin-top: 40px !important;
+}
+
+.HeaderTooltip {
+  display: inline-block;
+}

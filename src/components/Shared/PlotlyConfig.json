@@ -1,0 +1,6 @@
+{
+  "modeBarButtonsToRemove": ["sendDataToCloud"],
+  "displayModeBar": true,
+  "scrollZoom": true,
+  "displaylogo": false
+}

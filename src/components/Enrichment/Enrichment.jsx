@@ -1,0 +1,3901 @@
+import * as d3 from 'd3';
+import _, { filter, debounce } from 'lodash-es';
+import React, { Component } from 'react';
+import SVG from 'react-inlinesvg';
+import { withRouter } from 'react-router-dom';
+import { toast } from 'react-toastify';
+import { Grid, Menu, Popup, Sidebar, Tab, Message } from 'semantic-ui-react';
+
+import networkIcon from '../../resources/networkIcon.png';
+import networkIconSelected from '../../resources/networkIconSelected.png';
+import tableIcon from '../../resources/tableIcon.png';
+import tableIconSelected from '../../resources/tableIconSelected.png';
+import { omicNavigatorService } from '../../services/omicNavigator.service';
+import ButtonActions from '../Shared/ButtonActions';
+import {
+  isNotNANullUndefinedEmptyStringInf,
+  formatNumberForDisplay,
+  splitValue,
+  Linkout,
+  roundToPrecision,
+  getTestsArg,
+  getModelsArg,
+  isMultiModelMultiTest,
+} from '../Shared/helpers';
+import PlotHelpers from '../Shared/Plots/PlotHelpers';
+import '../Shared/Table.scss';
+import SearchingAlt from '../Transitions/SearchingAlt';
+import TransitionActive from '../Transitions/TransitionActive';
+import TransitionStill from '../Transitions/TransitionStill';
+
+import './Enrichment.scss';
+import EnrichmentOverlayBreadcrumbs from './EnrichmentOverlayBreadcrumbs';
+import EnrichmentSearch from './EnrichmentSearch';
+import NetworkGraphControls from './NetworkGraphControls';
+import SplitPanesContainer from './SplitPanesContainer';
+
+import CustomEmptyMessage from '../Shared/Templates';
+// eslint-disable-next-line no-unused-vars
+import { EZGrid } from '../Shared/QHGrid/index.module.js';
+import {
+  normalizeGridColumns,
+  augmentGridRows,
+} from '../../utilities/gridColumnUtils';
+import { createExcelExportHandler } from '../../utilities/excelExport';
+import ErrorBoundary from '../Shared/ErrorBoundary';
+import PlotsOverlay from '../Differential/PlotsOverlay';
+import { HEADER_OFFSET_PX } from '../Shared/constants';
+
+let cancelRequestEnrichmentGetPlot = () => {};
+let cancelRequestEnrichmentGetMultiPlot = () => {};
+let cancelRequestGetEnrichmentsNetwork = () => {};
+let cancelRequestGetBarcodeData = () => {};
+let cancelRequestEnrichmentGetOverlayPlot = () => {};
+let cancelRequestEnrichmentGetOverlayMultiPlot = () => {};
+const cacheGetEnrichmentsNetwork = {};
+
+// maximum fraction of viewport width for frozen first column (35 vw)
+const FROZEN_FIRST_COL_MAX_VW = 0.35;
+
+class Enrichment extends Component {
+  storedEnrichmentActiveIndex =
+    parseInt(sessionStorage.getItem('enrichmentViewTab'), 10) || 0;
+
+  frozenColumnResizeObserver = null;
+  frozenColumnMutationObserver = null;
+  frozenColumnObservedElement = null;
+  frozenColumnWrapperRef = null;
+  frozenColumnIntersectionObserver = null;
+  isResizing = false;
+
+  enrichmentColumnsConfigured = false;
+  state = {
+    pValueType: sessionStorage.getItem('pValueType') || 'nominal',
+    isValidSearchEnrichment: false,
+    isSearchingEnrichment: false,
+    isEnrichmentTableLoading: false,
+    enrichmentResults: [],
+    enrichmentColumns: [],
+    enrichmentColumnsUnfiltered: [],
+    enrichmentFeatureID: '',
+    enrichmentPlotSVGHeight: 0,
+    enrichmentPlotSVGWidth: 0,
+    activeIndexEnrichmentView: this.storedEnrichmentActiveIndex || 0,
+    multisetPlotInfoEnrichment: {
+      title: '',
+      svg: '',
+    },
+    multisetPlotAvailableEnrichment: false,
+    animationEnrichment: 'uncover',
+    directionEnrichment: 'left',
+    visibleEnrichment: false,
+    plotButtonActiveEnrichment: false,
+    uData: [],
+    displayViolinPlot: true,
+    // networkDataAvailable: false,
+    networkData: {
+      nodes: [],
+      links: [],
+      tests: [],
+    },
+    unfilteredNetworkData: {
+      nodes: [],
+      links: [],
+      tests: [],
+    },
+    networkDataLoaded: false,
+    networkGraphReady: false,
+    networkDataError: false,
+    tests: {},
+    nodeCutoff: sessionStorage.getItem('nodeCutoff') || 0.1,
+    linkCutoff: sessionStorage.getItem('linkCutoff') || 0.4,
+    linkType: sessionStorage.getItem('linkType') || 0.5,
+    filteredNodesTotal: 0,
+    filteredLinksTotal: 0,
+    totalNodes: 0,
+    totalLinks: 0,
+    legendIsOpen: true,
+    // legendIsOpen: JSON.parse(sessionStorage.getItem('legendOpen')) || true,
+    networkSettings: {
+      facets: {},
+      propLabel: {},
+      metaLabels: ['description', 'termID'],
+      meta: ['description', 'termID'],
+      facetAndValueLabel: ['Test', 'pValue'],
+      nodeLabel: 'description',
+      radiusScale: [10, 50],
+      lineScale: [5, 25],
+      nodeSize: 'geneSetSize',
+      linkSize: 'overlapSize',
+      linkMetaLabels: ['Overlap Size', 'Source', 'Target'],
+      linkMeta: ['overlapSize', 'source', 'target'],
+      linkMetaLookup: ['description', 'description'],
+      nodeColorScale: [0, 0.1, 1],
+      nodeColors: ['#e34a33', '#fdbb84', '#fee8c8'],
+      mostSignificantColorScale: ['#B78628', '#DBA514', '#FCC201'],
+      title: '',
+      id: 'chart-network',
+      margin: { top: 50, right: 50, bottom: 50, left: 0 },
+      duration: 1000,
+    },
+    annotationData: [],
+    enrichmentDataItem: [],
+    enrichmentTerm: '',
+    itemsPerPageInformedEnrichmentMain: null,
+    plotType: [],
+    plotDataEnrichment: {
+      key: null,
+      title: '',
+      svg: [],
+      dataItem: '',
+    },
+    cachedSVGs: [],
+    isTestSelected: false,
+    isTestDataLoaded: false,
+    SVGPlotLoading: false,
+    SVGPlotLoaded: false,
+    isViolinPlotLoaded: false,
+    hasAnnotationTerms: false,
+    barcodeSettings: {
+      barcodeData: [],
+      brushedData: [],
+      lineID: '',
+      statLabel: {},
+      statistic: 'statistic',
+      logFC: 'logFC',
+      highLabel: {},
+      lowLabel: {},
+      highStat: null,
+      lowStat: null,
+      enableBrush: false,
+    },
+    violinSettings: {
+      axisLabels: {
+        xAxis: 'abs(t)',
+        yAxis: "log<tspan baseline-shift='sub' font-size='14px'>2</tspan>FC",
+      },
+      // axisLabels: { xAxis: this.term, yAxis: "log<tspan baseline-shift='sub' font-size='14px'>2</tspan>(FC)" },
+      parentId: 'ViolinChartParent',
+      id: 'ViolinChart',
+      pointUniqueId: 'sample',
+      pointValue: 'cpm',
+      title: '',
+      subtitle: '',
+      tooltip: {
+        show: true,
+        fields: [
+          { label: 'log(FC)', value: 'cpm', toFixed: true },
+          { label: 'Feature', value: 'sample' },
+          // { label: 'featureID', value: 'featureID' },
+          // { label: 'abs(t)', value: 'statistic', toFixed: true },
+        ],
+      },
+      xName: 'tissue',
+      constrainExtremes: false,
+      color: d3.scaleOrdinal(d3.schemeCategory10),
+      margin: { top: 10, right: 30, bottom: 50, left: 60 },
+      scale: 'linear',
+      yName: null,
+      yTicks: 1,
+    },
+    violinData: [],
+    HighlightedProteins: [],
+    selectedProteinId: '',
+    enrichmentPlotTypes: [],
+    plotMultiFeatureAvailable: false,
+    plotMultiFeatureDataLoaded: true,
+    plotMultiFeatureData: {
+      key: null,
+      title: '',
+      svg: [],
+    },
+    plotMultiFeatureDataLength: 0,
+    // Fullscreen plot overlay (reuses Differential PlotsOverlay)
+    plotOverlayVisibleEnrichment: false,
+    plotOverlayLoadedEnrichment: false,
+    plotOverlayDataEnrichment: {
+      key: null,
+      title: '',
+      svg: [],
+    },
+    isMultiFeatureOverlayEnrichment: false,
+    featuresStringEnrichment: '',
+    plotMultiFeatureMax: 1000,
+    multiFeatureBullpenOpen: false,
+    enableSvgTabChangeOnSelection: true,
+    enrichmentModelsAndAnnotations: [], // listStudies.enrichments
+    enrichmentAnnotationIdsCommon: [],
+    enrichmentsLinkouts: [],
+    enrichmentsFavicons: [],
+    enrichmentFeatureIdKey: '',
+    // filteredDifferentialFeatureIdKey: '',
+    multisetQueriedEnrichment: false,
+    reloadPlot: false,
+    networkSigValue: '0.05',
+    networkOperator: '<',
+    networkTestsMust: [],
+    networkTestsNot: [],
+    previousEnrichmentStudy: '',
+    previousEnrichmentModel: '',
+    previousEnrichmentAnnotation: '',
+    multisetTestsFilteredOut: [],
+    itemsPerPageEnrichmentTable:
+      parseInt(localStorage.getItem('itemsPerPageEnrichmentTable'), 10) || 30,
+    isDataStreamingEnrichmentsTable: false,
+    enrichmentTest: '',
+    enrichmentModelIds: [],
+    enrichmentResultsColumnTooltips: [],
+    enrichmentPlotDescriptions: [],
+
+    //cap sidebar height to match the right content (table) height
+    enrichmentSidebarMaxHeight: null,
+  };
+  EnrichmentViewContainerRef = React.createRef();
+  EnrichmentGridRef = React.createRef();
+
+  _isMountedEnrichment = false;
+
+  _enrichmentSidebarResizeObserver = null;
+  _enrichmentSidebarRaf = null;
+  _enrichmentSidebarMaxHeightLast = null;
+
+  getEnrichmentViewportMinHeight = () => {
+    // Align with Search.scss header offset (57px)
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
+    return Math.max(0, vh - HEADER_OFFSET_PX);
+  };
+
+  scheduleEnrichmentSidebarHeightUpdate = () => {
+    if (this._enrichmentSidebarRaf) return;
+    this._enrichmentSidebarRaf = requestAnimationFrame(() => {
+      this._enrichmentSidebarRaf = null;
+      this.updateEnrichmentSidebarMaxHeight();
+    });
+  };
+
+  updateEnrichmentSidebarMaxHeight = () => {
+    const node = this.EnrichmentViewContainerRef?.current;
+    const minHeight = this.getEnrichmentViewportMinHeight();
+    if (!node) {
+      if (this._enrichmentSidebarMaxHeightLast !== minHeight) {
+        this._enrichmentSidebarMaxHeightLast = minHeight;
+        this.setState({ enrichmentSidebarMaxHeight: minHeight });
+      }
+      return;
+    }
+
+    const measured = Math.ceil(node.getBoundingClientRect().height || 0);
+    const next = Math.max(minHeight, measured);
+
+    if (
+      this._enrichmentSidebarMaxHeightLast !== null &&
+      Math.abs(this._enrichmentSidebarMaxHeightLast - next) <= 2
+    ) {
+      return;
+    }
+
+    this._enrichmentSidebarMaxHeightLast = next;
+    this.setState({ enrichmentSidebarMaxHeight: next });
+  };
+
+  /**
+   * Initializes the sidebar height synchronization system by setting up observers
+   * and event listeners.
+   *
+   * @returns {void}
+   */
+  initEnrichmentSidebarHeightSync = () => {
+    this.updateEnrichmentSidebarMaxHeight();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      this._enrichmentSidebarResizeObserver = new ResizeObserver(() => {
+        this.scheduleEnrichmentSidebarHeightUpdate();
+      });
+
+      const node = this.EnrichmentViewContainerRef?.current;
+      if (node) {
+        this._enrichmentSidebarResizeObserver.observe(node);
+      }
+    }
+  };
+
+  /**
+   * Cleans up all resources related to sidebar height synchronization.
+   *
+   * @returns {void}
+   */
+  cleanupEnrichmentSidebarHeightSync = () => {
+    if (this._enrichmentSidebarResizeObserver) {
+      this._enrichmentSidebarResizeObserver.disconnect();
+      this._enrichmentSidebarResizeObserver = null;
+    }
+    if (this._enrichmentSidebarRaf) {
+      cancelAnimationFrame(this._enrichmentSidebarRaf);
+      this._enrichmentSidebarRaf = null;
+    }
+  };
+
+  shouldComponentUpdate(nextProps) {
+    return nextProps.tab === 'enrichment';
+  }
+
+  componentDidMount() {
+    this.getTableHelpers(this.testSelectedTransition, this.showBarcodePlot);
+    this._isMountedEnrichment = true;
+
+    // Add debounced resize handler
+    this.debouncedWindowResize = debounce(
+      () => {
+        this.handleWindowResize();
+      },
+      150,
+      { leading: false, trailing: true },
+    );
+
+    window.addEventListener('resize', this.debouncedWindowResize);
+
+    // Keep the left sidebar height capped to the right content height
+    this.initEnrichmentSidebarHeightSync();
+  }
+
+  componentDidUpdate(prevProps, prevState, snapshot) {
+    if (this.state.enrichmentResults !== prevState.enrichmentResults) {
+      const DescriptionAndTest = this.props.enrichmentTestAndDescription || '';
+      if (DescriptionAndTest !== '') {
+        const AllDescriptionsAndTests = this.state.enrichmentResults;
+        const ResultsLength = this.state.enrichmentResults.length;
+        if (ResultsLength > 0) {
+          const dataItemDescription =
+            getDataItemDescription(DescriptionAndTest);
+          const dataItemIndex = _.findIndex(
+            AllDescriptionsAndTests,
+            function (d) {
+              return d.description === dataItemDescription;
+            },
+          );
+          const dataItem = AllDescriptionsAndTests[dataItemIndex];
+          const test = getTestName(DescriptionAndTest);
+          // const testNameIndex = _.findIndex(dataItem, function(n) {
+          //   return n.key === testName;
+          // });
+          // const test = dataItem[testNameIndex];
+          this.getThreePlotsFromUrl(
+            this.props.enrichmentStudy,
+            this.props.enrichmentModel,
+            this.props.enrichmentAnnotation,
+            dataItem,
+            test,
+            this.testSelectedTransition,
+            this.showBarcodePlot,
+          );
+        }
+      }
+    }
+  }
+
+  componentWillUnmount() {
+    this._isMountedEnrichment = false;
+
+    // Cleanup resize handler
+    if (this.debouncedWindowResize) {
+      this.debouncedWindowResize.cancel();
+      window.removeEventListener('resize', this.debouncedWindowResize);
+    }
+
+    // Cleanup all observers
+    if (this.frozenColumnResizeObserver) {
+      this.frozenColumnResizeObserver.disconnect();
+      this.frozenColumnResizeObserver = null;
+    }
+    if (this.frozenColumnMutationObserver) {
+      this.frozenColumnMutationObserver.disconnect();
+      this.frozenColumnMutationObserver = null;
+    }
+    if (this.frozenColumnIntersectionObserver) {
+      this.frozenColumnIntersectionObserver.disconnect();
+      this.frozenColumnIntersectionObserver = null;
+    }
+
+    this.frozenColumnObservedElement = null;
+    this.frozenColumnWrapperRef = null;
+
+    this.cleanupEnrichmentSidebarHeightSync();
+  }
+
+  handleWindowResize = () => {
+    // Keep sidebar cap in sync with viewport changes
+    this.scheduleEnrichmentSidebarHeightUpdate();
+
+    if (!this.frozenColumnWrapperRef) return;
+
+    const wrapper =
+      this.frozenColumnWrapperRef.closest?.('.two-col-sticky') ||
+      this.frozenColumnWrapperRef;
+
+    // Mark as resizing
+    this.isResizing = true;
+    wrapper?.classList?.add('resizing');
+
+    // Update width after resize
+    requestAnimationFrame(() => {
+      this.updateFrozenFirstColWidth();
+
+      // Remove resizing class after a brief delay
+      setTimeout(() => {
+        this.isResizing = false;
+        wrapper?.classList?.remove('resizing');
+      }, 100);
+    });
+  };
+
+  // windowResized = () => {
+  //   this.setState({
+  //     nodeCutoff: this.state.nodeCutoff,
+  //     linkCutoff: this.state.linkCutoff,
+  //   });
+  // };
+
+  handlePValueTypeChange = (type) => {
+    this.setState({
+      pValueType: type,
+    });
+    sessionStorage.setItem('pValueType', type);
+  };
+
+  handleEnrichmentColumnsConfigured = (bool) => {
+    this.enrichmentColumnsConfigured = bool;
+  };
+
+  getThreePlotsFromUrl = (
+    enrichmentStudy,
+    enrichmentModel,
+    enrichmentAnnotation,
+    dataItem,
+    test,
+    testSelectedTransitionCb,
+    showBarcodePlotCb,
+  ) => {
+    let self = this;
+    testSelectedTransitionCb(true);
+    // const TestSiteVar = `${test}:${dataItem.description}`;
+    // let xLargest = 0;
+    // let plotDataEnrichment = { key: '', title: '', svg: [] };
+    // omicNavigatorService
+    //   .getDatabaseInfo(
+    //     enrichmentStudy + 'plots',
+    //     enrichmentAnnotation,
+    //     this.handleGetDatabaseInfoError,
+    //   )
+    //   .then(annotationDataResponse => {
+    //     const annotationDataParsed = JSON.parse(annotationDataResponse);
+    //     self.setState({
+    //       annotationData: annotationDataParsed,
+    //     });
+    //     dataItem.Annotation = _.find(annotationDataParsed, {
+    //       Description: dataItem.description,
+    //     }).Key;
+    let term = dataItem?.termID || '';
+    let description = dataItem?.description || '';
+    self.setState({
+      plotDataEnrichment: {
+        ...self.state.plotDataEnrichment,
+        key: `${test}:${description}`,
+        title: `${test}:${description}`,
+      },
+      enrichmentNameLoaded: true,
+      enrichmentDataItem: dataItem,
+      enrichmentTerm: term,
+      enrichmentTest: test,
+    });
+    cancelRequestGetBarcodeData();
+    const controller = new AbortController();
+    const cancelToken = controller.signal;
+    cancelRequestGetBarcodeData = () => controller.abort();
+    omicNavigatorService
+      .getBarcodeData(
+        enrichmentStudy,
+        enrichmentModel,
+        test,
+        enrichmentAnnotation,
+        term,
+        this.handleGetBarcodeDataError,
+        cancelToken,
+      )
+      .then((barcodeDataResponse) => {
+        if (barcodeDataResponse == null) {
+          return;
+        }
+        if (barcodeDataResponse?.data?.length > 0) {
+          const logFoldChangeArr = barcodeDataResponse.data.map(
+            (b) => b.logFoldChange,
+          );
+          const isZero = (logFoldChangeVal) => logFoldChangeVal === 0;
+          if (logFoldChangeArr.every(isZero)) {
+            this.setState({
+              displayViolinPlot: false,
+            });
+          } else {
+            this.setState({
+              displayViolinPlot: true,
+            });
+          }
+          showBarcodePlotCb(barcodeDataResponse, dataItem);
+        } else {
+          this.setState({
+            displayViolinPlot: false,
+          });
+          showBarcodePlotCb(barcodeDataResponse, dataItem);
+          // empty barcode data array - we've decided to render the table and plots without barcode and violin
+          // this.handleGetBarcodeDataError();
+        }
+      })
+      .catch((error) => {
+        console.error('Error during getBarcodeData', error);
+      });
+    // })
+    // .catch(error => {
+    //   console.error('Error during getDatabaseInfo', error);
+    // });
+  };
+
+  handleMultisetTestsFiltered = (test, execute) => {
+    // this.handleSearchTransitionEnrichment(true);
+    // this.handleNetworkGraphReady(false);
+    // this.handleEnrichmentTableLoading(true);
+    const {
+      enrichmentColumnsUnfiltered,
+      unfilteredNetworkData,
+      enrichmentResults,
+    } = this.state;
+    var arr = [...this.state.multisetTestsFilteredOut];
+    if (test != null) {
+      const index = arr.indexOf(test);
+      if (index > -1) {
+        arr.splice(index, 1);
+      } else {
+        arr.push(test);
+      }
+      this.setState({
+        multisetTestsFilteredOut: arr,
+        // isEnrichmentTableLoading: false,
+        // isSearchingEnrichment: false,
+      });
+    }
+    if (execute) {
+      this.setState({
+        enrichmentColumns: enrichmentColumnsUnfiltered.map((col) => {
+          if (!arr.includes(col.title)) {
+            return col;
+          }
+          return { ...col, hidden: true };
+        }),
+        // isSearchingEnrichment: false,
+      });
+      this.handleEnrichmentNetworkData(
+        unfilteredNetworkData,
+        enrichmentResults,
+      );
+    }
+  };
+
+  handleSearchTransitionEnrichment = (bool) => {
+    this.setState({
+      isSearchingEnrichment: bool,
+    });
+  };
+
+  handleMultisetQueriedEnrichment = (value) => {
+    this.setState({
+      multisetQueriedEnrichment: value,
+    });
+  };
+
+  handleNetworkSigValue = (val) => {
+    this.setState({
+      networkSigValue: val.toString(),
+    });
+  };
+
+  handleNetworkOperator = (op) => {
+    this.setState({
+      networkOperator: op,
+    });
+  };
+  handleNetworkTests = (must, not) => {
+    this.setState({
+      networkTestsMust: must,
+      networkTestsNot: not,
+    });
+  };
+
+  handleEnrichmentSearch = (searchResults, enrichmentAnnotation) => {
+    const { multisetTestsFilteredOut } = this.state;
+    this.removeNetworkSVG();
+    this.setState({ networkGraphReady: false });
+
+    // cannot use this unless we can prevent first column (featureID) from being reordered
+    // if (this.state.enrichmentColumns.length === 0) {
+    //   this.handleColumnReorder(searchResults);
+    // }
+    let columns = this.state.enrichmentColumnsUnfiltered || [];
+    if (
+      searchResults?.length &&
+      (!this.enrichmentColumnsConfigured ||
+        this.state.enrichmentColumns.length === 0)
+    ) {
+      columns = this.getConfigCols(searchResults);
+      this.setState({
+        enrichmentColumnsUnfiltered: columns,
+      });
+      this.enrichmentColumnsConfigured = true;
+    }
+    if (multisetTestsFilteredOut.length > 0) {
+      columns = columns.map((col) => {
+        if (!multisetTestsFilteredOut.includes(col.title)) {
+          return col;
+        }
+        return { ...col, hidden: true };
+      });
+    }
+    this.getNetworkData(searchResults, enrichmentAnnotation);
+    this.setState({
+      networkDataError: false,
+      enrichmentResults: searchResults,
+      isSearchingEnrichment: false,
+      isEnrichmentTableLoading: false,
+      isValidSearchEnrichment: true,
+      plotButtonActiveEnrichment: false,
+      visibleEnrichment: false,
+      isTestSelected: false,
+      isTestDataLoaded: false,
+      enrichmentColumns: columns,
+    });
+  };
+
+  handleEnrichmentTableLoading = (bool) => {
+    this.setState({
+      isEnrichmentTableLoading: bool,
+    });
+  };
+
+  handleAnnotationChange = () => {
+    this.setState({
+      multisetTestsFilteredOut: [],
+      enrichmentColumnsUnfiltered: [],
+      enrichmentColumns: [],
+      enrichmentResults: [],
+      isEnrichmentTableLoading: false,
+    });
+  };
+
+  setHasAnnotationTerms = async (study, annotationID) => {
+    const hasAnnotationTerms = await omicNavigatorService.getHasAnnotationTerms(
+      study,
+      annotationID,
+    );
+    this.setState({
+      hasAnnotationTerms,
+    });
+  };
+
+  // handleColumnReorder = searchResults => {
+  //   const columns = this.getConfigCols(searchResults);
+  //   this.setState({ enrichmentColumns: columns });
+  // };
+
+  handlePlotTypesEnrichment = () => {
+    const { enrichmentPlotsMetadata } = this.state;
+    if (enrichmentPlotsMetadata.length) {
+      // filter out invalid plots - plotType string must be 'singleFeature', 'multiFeature', 'singleTest', 'multiTest', 'plotly'
+      const enrichmentPlotTypesVar = [...enrichmentPlotsMetadata].filter(
+        (plot) => {
+          if (!plot.plotType) {
+            plot.plotType = ['singleFeature', 'singleTest'];
+          }
+          let plotTypeArr = plot?.plotType;
+
+          // Convert string to array
+          if (typeof plotTypeArr === 'string') {
+            plotTypeArr = [plotTypeArr];
+          }
+
+          const isValidPlotType = (pt) =>
+            [
+              'singleFeature',
+              'multiFeature',
+              'singleTest',
+              'multiTest',
+              'plotly',
+            ].includes(pt);
+
+          const valid = Array.isArray(plotTypeArr)
+            ? plotTypeArr.every((t) => isValidPlotType(t))
+            : isValidPlotType(plotTypeArr);
+
+          if (!valid) {
+            console.log(
+              `${plot?.plotID} will be ignored because it has unknown plotType ${plot.plotType}`,
+            );
+            toast.error(
+              `${plot?.plotID} will be ignored because it has unknown plotType ${plot.plotType}`,
+            );
+          }
+          return valid;
+        },
+      );
+
+      // Split into single- and multi-feature plots
+      let singleFeaturePlotTypesVar = [];
+      let multiFeaturePlotTypesVar = [];
+      let plotMultiFeatureAvailableVar = false;
+
+      if (enrichmentPlotTypesVar && enrichmentPlotTypesVar.length) {
+        singleFeaturePlotTypesVar = enrichmentPlotTypesVar.filter(
+          (p) => !p.plotType.includes('multiFeature'),
+        );
+        multiFeaturePlotTypesVar = enrichmentPlotTypesVar.filter((p) =>
+          p.plotType.includes('multiFeature'),
+        );
+        plotMultiFeatureAvailableVar = multiFeaturePlotTypesVar.length > 0;
+      }
+
+      this.setState({
+        // keep existing single-feature behavior
+        enrichmentPlotTypes: singleFeaturePlotTypesVar,
+        // expose multi-feature plotTypes
+        enrichmentMultiFeaturePlotTypes: multiFeaturePlotTypesVar,
+        plotMultiFeatureAvailable: plotMultiFeatureAvailableVar,
+      });
+    } else {
+      this.setState({
+        enrichmentPlotTypes: [],
+        enrichmentMultiFeaturePlotTypes: [],
+        plotMultiFeatureAvailable: false,
+      });
+    }
+  };
+
+  handleSVGMultiFeature = (plotDataMultiFeatureVar) => {
+    this.setState({
+      plotMultiFeatureData: plotDataMultiFeatureVar,
+      plotMultiFeatureDataLength: plotDataMultiFeatureVar.svg?.length || 0,
+      plotMultiFeatureDataLoaded: true,
+    });
+  };
+
+  getMultifeaturePlotEnrichment = (featureIds) => {
+    const {
+      enrichmentMultiFeaturePlotTypes,
+      enrichmentTest,
+      uData,
+      enrichmentModelIds,
+      enrichmentModelsAndAnnotations,
+      enrichmentPlotDescriptions,
+      enrichmentAnnotationIdsCommon,
+      plotMultiFeatureMax,
+    } = this.state;
+    const { enrichmentStudy, enrichmentModel, enrichmentAnnotation } =
+      this.props;
+
+    const idsRaw = Array.isArray(featureIds) ? featureIds.filter(Boolean) : [];
+    if (!idsRaw.length || !enrichmentMultiFeaturePlotTypes.length) {
+      this.setState({
+        plotMultiFeatureData: { key: null, title: '', svg: [] },
+        plotMultiFeatureDataLength: 0,
+        plotMultiFeatureDataLoaded: true,
+      });
+      return;
+    }
+
+    // cap number of features
+    const max = plotMultiFeatureMax || 1000;
+    const ids = idsRaw.slice(0, max);
+
+    let plotDataMultiFeatureVar = {
+      key: ids.join(','),
+      title: this.state.plotDataEnrichment.title || '',
+      svg: [],
+    };
+
+    // cancel any previous multi-feature in-flight request
+    cancelRequestEnrichmentGetMultiPlot();
+    const controller = new AbortController();
+    const cancelToken = controller.signal;
+    cancelRequestEnrichmentGetMultiPlot = () => controller.abort();
+
+    const self = this;
+
+    const promises = enrichmentMultiFeaturePlotTypes.map((plot) => {
+      const plotMetadataSpecificPlot = enrichmentPlotDescriptions[plot.plotID];
+      const designatedModels = plotMetadataSpecificPlot?.models || null;
+      const designatedModelsMultiModelExists =
+        designatedModels &&
+        designatedModels !== 'all' &&
+        designatedModels.includes(enrichmentModel);
+
+      const enrichmentModelIdsOverride = designatedModelsMultiModelExists
+        ? designatedModels
+        : enrichmentModelIds;
+
+      const isMultiModelMultiTestVar = isMultiModelMultiTest(plot.plotType);
+      const testIdNotCommon =
+        !enrichmentAnnotationIdsCommon.includes(enrichmentAnnotation);
+
+      let testsArg = [];
+      if (isMultiModelMultiTestVar && testIdNotCommon) {
+        testsArg = [];
+      } else {
+        testsArg = getTestsArg(
+          plot.plotType,
+          enrichmentModelIdsOverride,
+          uData,
+          enrichmentTest,
+        );
+      }
+
+      let modelsArg = getModelsArg(
+        plot.plotType,
+        enrichmentModelIdsOverride,
+        uData,
+        enrichmentModel,
+        enrichmentModelsAndAnnotations, // listStudies.enrichments
+        null,
+        enrichmentAnnotationIdsCommon,
+      );
+
+      // for multi-feature plots, backend expects an array of feature IDs
+      const idArg = ids;
+
+      return omicNavigatorService
+        .plotStudyReturnSvgUrl(
+          enrichmentStudy,
+          modelsArg,
+          idArg,
+          plot.plotID,
+          plot.plotType,
+          testsArg,
+          null,
+          cancelToken,
+        )
+        .then((svg) => {
+          const svgInfo = { plotType: plot, svg };
+          plotDataMultiFeatureVar.svg.push(svgInfo);
+          return svgInfo;
+        });
+    });
+
+    if (!promises.length) {
+      this.setState({ plotMultiFeatureDataLoaded: true });
+      return;
+    }
+
+    // First arriving SVG -> quick feedback in UI
+    Promise.race(promises)
+      .then(() => {
+        self.handleSVGMultiFeature({ ...plotDataMultiFeatureVar });
+      })
+      .catch((error) => {
+        if (!error.__CANCEL__) {
+          console.error('Error during multi-feature plot race:', error);
+        }
+      });
+
+    // Then complete set for export, etc.
+    Promise.allSettled(promises)
+      .then((results) => {
+        if (!results) return;
+        const svgArray = results
+          .filter((r) => r.status === 'fulfilled')
+          .map(({ value }) => value);
+
+        if (svgArray.length) {
+          self.handleSVGMultiFeature({
+            ...plotDataMultiFeatureVar,
+            svg: svgArray,
+          });
+        }
+      })
+      .catch((error) => {
+        if (!error.__CANCEL__) {
+          console.error('Error during multi-feature plot allSettled:', error);
+        }
+      });
+  };
+
+  getMultifeaturePlotTransitionEnrichment = () => {
+    const { HighlightedProteins } = this.state;
+
+    this.reloadMultifeaturePlotEnrichment(HighlightedProteins || []);
+  };
+
+  handleSearchChangeEnrichment = (changes, scChange) => {
+    if (
+      changes.enrichmentAnnotation !== '' &&
+      changes.enrichmentAnnotation !== this.props.enrichmentAnnotation
+    ) {
+      // get favicons before anything else
+      this.getEnrichmentsLinkouts(
+        changes.enrichmentStudy,
+        changes.enrichmentAnnotation,
+      );
+    }
+    this.props.onHandleUrlChange(changes, 'enrichment');
+    this.setState({
+      plotButtonActiveEnrichment: false,
+      visibleEnrichment: false,
+    });
+    if (scChange) {
+      this.setState({
+        multisetPlotAvailableEnrichment: false,
+      });
+    }
+  };
+
+  getEnrichmentsLinkouts = (enrichmentStudy, enrichmentAnnotation) => {
+    const cachedEnrichmentsLinkouts = sessionStorage.getItem(
+      `EnrichmentsLinkouts-${enrichmentStudy}_${enrichmentAnnotation}`,
+    );
+    if (cachedEnrichmentsLinkouts) {
+      const parsedEnrichmentsLinkouts = JSON.parse(cachedEnrichmentsLinkouts);
+      this.setState({
+        enrichmentsLinkouts: parsedEnrichmentsLinkouts,
+      });
+      const cachedEnrichmentsFavicons = sessionStorage.getItem(
+        `EnrichmentsFavicons-${enrichmentStudy}_${enrichmentAnnotation}`,
+      );
+      if (cachedEnrichmentsFavicons) {
+        const parsedEnrichmentsFavicons = JSON.parse(cachedEnrichmentsFavicons);
+        this.setState({
+          enrichmentsFavicons: parsedEnrichmentsFavicons,
+        });
+      } else {
+        this.setState({
+          enrichmentsFavicons: [],
+        });
+        omicNavigatorService
+          .getFavicons(parsedEnrichmentsLinkouts)
+          .then((getFaviconsResponseData) => {
+            const favicons = getFaviconsResponseData || [];
+            this.setState(
+              {
+                enrichmentsFavicons: favicons,
+              },
+              sessionStorage.setItem(
+                `EnrichmentsFavicons-${enrichmentStudy}_${enrichmentAnnotation}`,
+                JSON.stringify(favicons),
+              ),
+            );
+          });
+      }
+    } else {
+      this.setState({
+        enrichmentsLinkouts: [],
+        enrichmentsFavicons: [],
+      });
+      omicNavigatorService
+        .getEnrichmentsLinkouts(enrichmentStudy, enrichmentAnnotation)
+        .then((getEnrichmentsLinkoutsResponseData) => {
+          const linkouts = getEnrichmentsLinkoutsResponseData;
+          this.setState({
+            enrichmentsLinkouts: linkouts,
+          });
+          sessionStorage.setItem(
+            `EnrichmentsLinkouts-${enrichmentStudy}_${enrichmentAnnotation}`,
+            JSON.stringify(linkouts),
+          );
+          omicNavigatorService
+            .getFavicons(getEnrichmentsLinkoutsResponseData)
+            .then((getFaviconsResponseData) => {
+              const favicons = getFaviconsResponseData || [];
+              this.setState({
+                enrichmentsFavicons: favicons,
+              });
+              sessionStorage.setItem(
+                `EnrichmentsFavicons-${enrichmentStudy}_${enrichmentAnnotation}`,
+                JSON.stringify(favicons),
+              );
+            });
+        });
+    }
+    this.getFilteredDifferentialLinkouts(
+      enrichmentStudy,
+      this.props.enrichmentModel,
+    );
+  };
+
+  getFilteredDifferentialLinkouts = (enrichmentStudy, enrichmentModel) => {
+    const cachedFilteredDifferentialLinkouts = sessionStorage.getItem(
+      `FilteredDifferentialLinkouts-${enrichmentStudy}_${enrichmentModel}`,
+    );
+    if (cachedFilteredDifferentialLinkouts) {
+      const parsedFilteredDifferentialLinkouts = JSON.parse(
+        cachedFilteredDifferentialLinkouts,
+      );
+      this.setState({
+        filteredDifferentialLinkouts: parsedFilteredDifferentialLinkouts,
+      });
+      const cachedFilteredDifferentialFavicons = sessionStorage.getItem(
+        `FilteredDifferentialFavicons-${enrichmentStudy}_${enrichmentModel}`,
+      );
+      if (cachedFilteredDifferentialFavicons) {
+        const parsedFilteredDifferentialFavicons = JSON.parse(
+          cachedFilteredDifferentialFavicons,
+        );
+        this.setState({
+          filteredDifferentialFavicons: parsedFilteredDifferentialFavicons,
+        });
+      } else {
+        this.setState({
+          filteredDifferentialFavicons: [],
+        });
+        omicNavigatorService
+          .getFavicons(parsedFilteredDifferentialLinkouts)
+          .then((getFaviconsResponseData) => {
+            const favicons = getFaviconsResponseData || [];
+            this.setState({
+              filteredDifferentialFavicons: favicons,
+            });
+            sessionStorage.setItem(
+              `FilteredDifferentialFavicons-${enrichmentStudy}_${enrichmentModel}`,
+              JSON.stringify(favicons),
+            );
+          });
+      }
+    } else {
+      this.setState({
+        filteredDifferentialLinkouts: [],
+        filteredDifferentialFavicons: [],
+      });
+      omicNavigatorService
+        .getResultsLinkouts(enrichmentStudy, enrichmentModel)
+        .then((getFilteredDifferentialLinkoutsResponseData) => {
+          const linkouts = getFilteredDifferentialLinkoutsResponseData || [];
+          this.setState({
+            filteredDifferentialLinkouts: linkouts,
+          });
+          sessionStorage.setItem(
+            `FilteredDifferentialLinkouts-${enrichmentStudy}_${enrichmentModel}`,
+            JSON.stringify(linkouts),
+          );
+          omicNavigatorService
+            .getFavicons(linkouts)
+            .then((getFaviconsResponseData) => {
+              const favicons = getFaviconsResponseData || [];
+              this.setState({
+                filteredDifferentialFavicons: favicons,
+              });
+              sessionStorage.setItem(
+                `FilteredDifferentialFavicons-${enrichmentStudy}_${enrichmentModel}`,
+                JSON.stringify(favicons),
+              );
+            });
+        });
+    }
+  };
+
+  handleIsDataStreamingEnrichmentsTable = (bool) => {
+    this.setState({
+      isDataStreamingEnrichmentsTable: bool,
+    });
+  };
+
+  disablePlotEnrichment = () => {
+    this.setState({
+      multisetPlotAvailableEnrichment: false,
+    });
+  };
+
+  handleSearchResetEnrichment = () => {
+    this.setState({
+      isTestSelected: false,
+      isTestDataLoaded: false,
+      isValidSearchEnrichment: false,
+      multisetPlotAvailableEnrichment: false,
+      plotButtonActiveEnrichment: false,
+      visibleEnrichment: false,
+      // displayViolinPlot: false,
+    });
+  };
+
+  handlePlotAnimationEnrichment = (animationEnrichment) => () => {
+    this.setState((prevState) => ({
+      animationEnrichment,
+      visibleEnrichment: !prevState.visibleEnrichment,
+      plotButtonActiveEnrichment: !prevState.plotButtonActiveEnrichment,
+    }));
+  };
+
+  /**
+   * Handles the transition to display a single feature plot enrichment overlay
+   *
+   * This method prepares the component state to display a single feature plot in an overlay.
+   * It sets the necessary state variables for the overlay visibility and data structure,
+   * then triggers the actual plot data loading via the getPlotOverlay method.
+   *
+   * @param {string|number} key - The identifier of the feature to be plotted
+   */
+  getSingleFeaturePlotTransitionEnrichment = (key) => {
+    if (!key) return;
+    const self = this;
+    this.setState(
+      {
+        plotOverlayVisibleEnrichment: true,
+        plotOverlayLoadedEnrichment: false,
+        isMultiFeatureOverlayEnrichment: false,
+        featuresStringEnrichment: String(key),
+        plotOverlayDataEnrichment: {
+          key: key,
+          title: key,
+          svg: [],
+        },
+      },
+      function () {
+        self.getPlotOverlay(key);
+      },
+    );
+  };
+
+  /**
+   * Handles the transition to display a multi-feature plot enrichment overlay
+   *
+   * This method prepares the component state to display a plot of multiple features in an overlay.
+   * It extracts feature IDs from highlighted proteins, validates there are enough features to display,
+   * then sets up the necessary state variables before triggering the data loading process.
+   *
+   * @returns {void}
+   */
+  getMultifeaturePlotTransitionOverlayEnrichment = () => {
+    const { HighlightedProteins } = this.state;
+    if (!HighlightedProteins || HighlightedProteins.length < 2) return;
+
+    const featureIds = HighlightedProteins.map(
+      (p) => p.featureID || p.key || p.id,
+    ).filter(Boolean);
+
+    if (featureIds.length < 2) return;
+
+    const title = `Multi-Feature Plot (${featureIds.length} features)`;
+
+    this.setState(
+      {
+        plotOverlayVisibleEnrichment: true,
+        plotOverlayLoadedEnrichment: false,
+        isMultiFeatureOverlayEnrichment: true,
+        featuresStringEnrichment: featureIds.join(', '),
+        plotOverlayDataEnrichment: {
+          key: `${featureIds.length} features`,
+          title,
+          svg: [],
+        },
+      },
+      () => {
+        this.getPlotOverlayMultiFeatureEnrichment(featureIds);
+      },
+    );
+  };
+
+  /**
+   * Resets the state to hide the plot overlay and return to the split panes view
+   *
+   * This method resets all state variables related to the plot overlay enrichment,
+   * effectively hiding the overlay and clearing its data. It's typically used as
+   * a callback for "back" or "close" buttons in the overlay interface.
+   *
+   * @returns {void}
+   */
+  backToSplitPanesEnrichment = () => {
+    this.setState(
+      {
+        plotOverlayVisibleEnrichment: false,
+        plotOverlayLoadedEnrichment: false,
+        isMultiFeatureOverlayEnrichment: false,
+        featuresStringEnrichment: '',
+        plotOverlayDataEnrichment: { key: null, title: '', svg: [] },
+      },
+      () => {
+        // Ensure plots re-measure correctly after returning from an overlay.
+        // (Some SVG/D3 layouts depend on a resize/reflow signal.)
+        window.dispatchEvent(new Event('resize'));
+      },
+    );
+  };
+
+  /**
+   * Fetch plot data for the overlay view using plotStudyReturnSvg.
+   * TabOverlay expects raw SVG markup (not URLs) for dangerouslySetInnerHTML.
+   */
+  getPlotOverlay = (featureId) => {
+    const {
+      enrichmentPlotTypes,
+      enrichmentTest,
+      uData,
+      enrichmentModelIds,
+      enrichmentModelsAndAnnotations,
+      enrichmentPlotDescriptions,
+      enrichmentAnnotationIdsCommon,
+    } = this.state;
+    const { enrichmentStudy, enrichmentModel, enrichmentAnnotation } =
+      this.props;
+
+    const id = featureId != null ? featureId : '';
+
+    cancelRequestEnrichmentGetOverlayPlot();
+    const controller = new AbortController();
+    const cancelToken = controller.signal;
+    cancelRequestEnrichmentGetOverlayPlot = () => controller.abort();
+
+    const self = this;
+
+    // Filter to single-feature plot types only
+    const plots = (enrichmentPlotTypes || []).filter(
+      (p) => !p.plotType.includes('multiFeature'),
+    );
+
+    if (plots.length === 0) {
+      this.setState({ plotOverlayLoadedEnrichment: true });
+      return;
+    }
+
+    const promises = plots.map((plot, index) => {
+      const plotMetadataSpecificPlot = enrichmentPlotDescriptions[plot.plotID];
+      const designatedModels = plotMetadataSpecificPlot?.models || null;
+      const designatedModelsMultiModelExists =
+        designatedModels &&
+        designatedModels !== 'all' &&
+        designatedModels.includes(enrichmentModel);
+      const enrichmentModelIdsOverride = designatedModelsMultiModelExists
+        ? designatedModels
+        : enrichmentModelIds;
+
+      const isMultiModelMultiTestVar = isMultiModelMultiTest(plot.plotType);
+      const testIdNotCommon =
+        !enrichmentAnnotationIdsCommon.includes(enrichmentAnnotation);
+
+      let testsArg = [];
+      if (isMultiModelMultiTestVar && testIdNotCommon) {
+        testsArg = [];
+      } else {
+        testsArg = getTestsArg(
+          plot.plotType,
+          enrichmentModelIdsOverride,
+          uData,
+          enrichmentTest,
+        );
+      }
+
+      const modelsArg = getModelsArg(
+        plot.plotType,
+        enrichmentModelIdsOverride,
+        uData,
+        enrichmentModel,
+        enrichmentModelsAndAnnotations,
+        null,
+        enrichmentAnnotationIdsCommon,
+      );
+
+      // Use plotStudyReturnSvg to get raw SVG content (not URL)
+      return omicNavigatorService
+        .plotStudyReturnSvg(
+          enrichmentStudy,
+          modelsArg,
+          id,
+          plot.plotID,
+          plot.plotType,
+          testsArg,
+          null,
+          cancelToken,
+        )
+        .then((svgResponse) => {
+          // plotStudyReturnSvg returns { data: '<svg>...</svg>' } or raw string
+          const raw = svgResponse?.data || svgResponse || '';
+          const isPlotlyPlot = plot.plotType.includes('plotly');
+          const svg = isPlotlyPlot
+            ? raw
+            : PlotHelpers.sanitizeStaticSvg(raw, {
+                idBase: 'enrichment-overlay-single',
+                svgIndex: index,
+                multiFeature: false,
+              });
+          return { svg, plotType: plot };
+        })
+        .catch((error) => {
+          console.error(`Error fetching overlay plot ${plot.plotID}:`, error);
+          return null;
+        });
+    });
+
+    Promise.all(promises).then((results) => {
+      const svgArray = results.filter(Boolean);
+      self.setState({
+        plotOverlayDataEnrichment: {
+          key: id,
+          title: id,
+          svg: svgArray,
+        },
+        plotOverlayLoadedEnrichment: true,
+      });
+    });
+  };
+
+  /**
+   * Build overlay data for multi-feature plots.
+   *
+   */
+  getPlotOverlayMultiFeatureEnrichment = (featureIds) => {
+    const {
+      enrichmentMultiFeaturePlotTypes,
+      enrichmentTest,
+      uData,
+      enrichmentModelIds,
+      enrichmentModelsAndAnnotations,
+      enrichmentPlotDescriptions,
+      enrichmentAnnotationIdsCommon,
+      plotMultiFeatureMax,
+    } = this.state;
+
+    const { enrichmentStudy, enrichmentModel, enrichmentAnnotation } =
+      this.props;
+
+    const idsRaw = Array.isArray(featureIds) ? featureIds.filter(Boolean) : [];
+    if (idsRaw.length < 2 || !(enrichmentMultiFeaturePlotTypes || []).length) {
+      this.setState({ plotOverlayLoadedEnrichment: true });
+      return;
+    }
+
+    const max = plotMultiFeatureMax || 1000;
+    const ids = idsRaw.slice(0, max);
+
+    // Cancel any previous in-flight multi-feature overlay request.
+    cancelRequestEnrichmentGetOverlayMultiPlot();
+    const controller = new AbortController();
+    const cancelToken = controller.signal;
+    cancelRequestEnrichmentGetOverlayMultiPlot = () => controller.abort();
+
+    const title = `Multi-Feature Plot (${ids.length} features)`;
+
+    const promises = (enrichmentMultiFeaturePlotTypes || []).map(
+      (plot, index) => {
+        try {
+          const plotMetadataSpecificPlot =
+            enrichmentPlotDescriptions?.[plot.plotID];
+          const designatedModels = plotMetadataSpecificPlot?.models || null;
+          const designatedModelsMultiModelExists =
+            designatedModels &&
+            designatedModels !== 'all' &&
+            designatedModels.includes(enrichmentModel);
+
+          const enrichmentModelIdsOverride = designatedModelsMultiModelExists
+            ? designatedModels
+            : enrichmentModelIds;
+
+          const isMultiModelMultiTestVar = isMultiModelMultiTest(plot.plotType);
+          const testIdNotCommon =
+            !enrichmentAnnotationIdsCommon.includes(enrichmentAnnotation);
+
+          let testsArg = [];
+          if (isMultiModelMultiTestVar && testIdNotCommon) {
+            testsArg = [];
+          } else {
+            testsArg = getTestsArg(
+              plot.plotType,
+              enrichmentModelIdsOverride,
+              uData,
+              enrichmentTest,
+            );
+          }
+
+          const modelsArg = getModelsArg(
+            plot.plotType,
+            enrichmentModelIdsOverride,
+            uData,
+            enrichmentModel,
+            enrichmentModelsAndAnnotations,
+            null,
+            enrichmentAnnotationIdsCommon,
+          );
+
+          const idArg = ids; // backend expects an array of feature IDs for multi-feature
+
+          const isPlotlyPlot = plot.plotType.includes('plotly');
+
+          const request = isPlotlyPlot
+            ? omicNavigatorService.plotStudyReturnSvgUrl(
+                enrichmentStudy,
+                modelsArg,
+                idArg,
+                plot.plotID,
+                plot.plotType,
+                testsArg,
+                null,
+                cancelToken,
+              )
+            : omicNavigatorService.plotStudyReturnSvg(
+                enrichmentStudy,
+                modelsArg,
+                idArg,
+                plot.plotID,
+                plot.plotType,
+                testsArg,
+                null,
+                cancelToken,
+              );
+
+          return request
+            .then((res) => {
+              const raw = res?.data || res || '';
+              const svg = isPlotlyPlot
+                ? raw
+                : PlotHelpers.sanitizeStaticSvg(raw, {
+                    idBase: 'enrichment-overlay-multifeature',
+                    svgIndex: index,
+                    multiFeature: true,
+                  });
+              return { svg, plotType: plot };
+            })
+            .catch((error) => {
+              if (!error?.__CANCEL__) {
+                console.error(
+                  `Error fetching multi-feature overlay plot ${plot.plotID}:`,
+                  error,
+                );
+              }
+              return {
+                svg: `Error: ${plot.plotDisplay} could not be created`,
+                plotType: plot,
+              };
+            });
+        } catch (e) {
+          console.error('Error building multi-feature overlay request:', e);
+          return Promise.resolve({
+            svg: `Error: ${plot?.plotDisplay || 'Plot'} could not be created`,
+            plotType: plot,
+          });
+        }
+      },
+    );
+
+    Promise.all(promises).then((svgArray) => {
+      this.setState({
+        plotOverlayDataEnrichment: {
+          key: `${ids.length} features`,
+          title,
+          svg: svgArray.filter(Boolean),
+        },
+        plotOverlayLoadedEnrichment: true,
+      });
+    });
+  };
+
+  handleMultisetPlot = (multisetPlotResults) => {
+    this.setState({
+      multisetPlotInfoEnrichment: {
+        title: multisetPlotResults.svgInfo.plotType,
+        svg: multisetPlotResults.svgInfo.svg,
+      },
+      multisetPlotAvailableEnrichment: true,
+    });
+  };
+
+  getConfigCols = (annotationData) => {
+    const { enrichmentStudy, enrichmentModel, enrichmentAnnotation } =
+      this.props;
+    const { enrichmentsLinkouts, enrichmentsFavicons, hasAnnotationTerms } =
+      this.state;
+    const TableValuePopupStyle = {
+      backgroundColor: '2E2E2E',
+      borderBottom: '2px solid var(--color-primary)',
+      color: '#FFF',
+      padding: '1em',
+      maxWidth: '50vw',
+      fontSize: '13px',
+      wordBreak: 'break-all',
+    };
+    let enrichmentAlphanumericFields = [];
+    let enrichmentNumericFields = [];
+    // grab first object
+    let firstFullObject =
+      [...annotationData].length > 0 ? [...annotationData][0] : null;
+    // if exists, loop through the values of each property,
+    // find the first real value,
+    // and set the config column types
+    if (firstFullObject) {
+      let allProperties = Object.keys(firstFullObject);
+      const dataCopy = [...annotationData];
+      allProperties.forEach((property) => {
+        // loop through data, one property at a time
+        const notNullObject = dataCopy.find((row) => {
+          // find the first value for that property
+          return isNotNANullUndefinedEmptyStringInf(row[property]);
+        });
+        let notNullValue = null;
+        if (notNullObject) {
+          notNullValue = notNullObject[property] || null;
+          // if the property has a value somewhere in the data
+          if (
+            typeof notNullValue === 'string' ||
+            notNullValue instanceof String
+          ) {
+            // push it to the appropriate field type
+            enrichmentAlphanumericFields.push(property);
+          } else {
+            enrichmentNumericFields.push(property);
+          }
+        } else {
+          // otherwise push it to type numeric
+          enrichmentNumericFields.push(property);
+        }
+      });
+    }
+
+    const alphanumericTrigger = enrichmentAlphanumericFields[0];
+    this.setState({ enrichmentFeatureIdKey: alphanumericTrigger });
+    const enrichmentAlphanumericColumnsMapped =
+      enrichmentAlphanumericFields.map((f) => {
+        return {
+          title: f,
+          field: f,
+          filterable: { type: 'multiFilter' },
+          template: (value, item) => {
+            if (f === alphanumericTrigger) {
+              let linkoutWithIcon = null;
+              const currentLinkouts = this.state.enrichmentsLinkouts;
+              const currentFavicons = this.state.enrichmentsFavicons;
+              if (currentLinkouts == null) return null;
+              const linkoutsIsArray = Array.isArray(currentLinkouts);
+              const linkouts = linkoutsIsArray
+                ? currentLinkouts
+                : [currentLinkouts];
+              let favicons = [];
+              if (linkouts.length > 0) {
+                if (currentFavicons != null) {
+                  const columnFaviconsIsArray = Array.isArray(currentFavicons);
+                  favicons = columnFaviconsIsArray
+                    ? currentFavicons
+                    : [currentFavicons];
+                }
+                const itemValue = item[f];
+                linkoutWithIcon = (
+                  <Linkout {...{ itemValue, linkouts, favicons }} />
+                );
+              }
+              return (
+                <div>
+                  <Popup
+                    trigger={
+                      <span className="TableValue">{splitValue(value)}</span>
+                    }
+                    style={TableValuePopupStyle}
+                    className="TablePopupValue"
+                    content={value}
+                    inverted
+                    basic
+                  />
+                  {linkoutWithIcon}
+                </div>
+              );
+            } else {
+              return (
+                <div>
+                  <Popup
+                    trigger={
+                      <span className="TableValue">{splitValue(value)}</span>
+                    }
+                    style={TableValuePopupStyle}
+                    className="TablePopupValue"
+                    content={value}
+                    inverted
+                    basic
+                  />
+                </div>
+              );
+            }
+          },
+        };
+      });
+
+    // multiset svg rebuilds based on uData...if there are no results we need to override this from being passed down
+    if (enrichmentNumericFields.length !== 0) {
+      this.setState({
+        uData: enrichmentNumericFields,
+      });
+    }
+    const enrichmentNumericColumnsMapped = enrichmentNumericFields.map((c) => {
+      return {
+        title: c,
+        field: c,
+        type: 'number',
+        filterable: { type: 'numericFilter' },
+        exportTemplate: (value) => (value ? `${value}` : 'N/A'),
+        template: (value, item, addParams) => {
+          const currentHasAnnotationTerms = this.state.hasAnnotationTerms;
+          const currentStudy = this.props.enrichmentStudy;
+          const currentModel = this.props.enrichmentModel;
+          const currentAnnotation = this.props.enrichmentAnnotation;
+          return (
+            <div>
+              <Popup
+                trigger={
+                  <span
+                    className={currentHasAnnotationTerms ? 'TableCellLink' : ''}
+                    onClick={
+                      currentHasAnnotationTerms
+                        ? addParams.barcodeData(
+                            currentStudy,
+                            currentModel,
+                            currentAnnotation,
+                            item,
+                            c,
+                          )
+                        : undefined
+                    }
+                  >
+                    {formatNumberForDisplay(value)}
+                  </span>
+                }
+                style={
+                  currentHasAnnotationTerms ? TableValuePopupStyle : undefined
+                }
+                className={currentHasAnnotationTerms ? 'TablePopupValue' : ''}
+                content={
+                  currentHasAnnotationTerms
+                    ? 'View Interactive Barcode Plot'
+                    : 'No Annotation Terms Available'
+                }
+                inverted
+                basic
+              />
+            </div>
+          );
+        },
+      };
+    });
+
+    const configCols = enrichmentAlphanumericColumnsMapped.concat(
+      enrichmentNumericColumnsMapped,
+    );
+    return configCols;
+  };
+
+  /**
+   * Measures the current rendered first column header width and writes it to
+   * --frozen-first-column-width on the sticky wrapper.
+   *
+   * IMPORTANT: write the CSS variable on the wrapper (stable across QHGrid re-renders),
+   * not on the table node (which can be replaced on sort/filter).
+   */
+  updateFrozenFirstColWidth = () => {
+    const inner = this.frozenColumnWrapperRef;
+    if (!inner) return;
+
+    const wrapper = inner.closest?.('.two-col-sticky') || inner;
+    if (!wrapper) return;
+
+    const table =
+      wrapper.querySelector('table.QHGrid--body') ||
+      wrapper.querySelector('.QHGrid--body');
+
+    if (!table) return;
+
+    let firstHeaderCell =
+      table.querySelector('thead tr th:first-child') ||
+      table.querySelector('div[role="columnheader"]:first-child');
+
+    if (!firstHeaderCell) return;
+
+    // Batch DOM reads
+    const rect = firstHeaderCell.getBoundingClientRect();
+    const measuredWidth = Math.ceil(rect.width);
+
+    if (!measuredWidth || measuredWidth <= 0) return;
+
+    // Calculate max with current viewport width
+    const viewportWidth = window.innerWidth;
+    const maxPx = Math.ceil(viewportWidth * FROZEN_FIRST_COL_MAX_VW);
+
+    // Get current width to avoid micro-updates
+    const currentWidthStr =
+      wrapper.style.getPropertyValue('--frozen-first-column-width') || '0';
+    const currentWidth = parseInt(currentWidthStr, 10);
+
+    // Apply width with clamping
+    const appliedWidth = measuredWidth > maxPx ? maxPx : measuredWidth;
+
+    // Transition buffer to prevent jank from tiny changes
+    const TRANSITION_BUFFER = 3; // px
+    if (
+      Math.abs(appliedWidth - currentWidth) < TRANSITION_BUFFER &&
+      !this.isResizing
+    ) {
+      return;
+    }
+
+    // Batch DOM writes in RAF
+    requestAnimationFrame(() => {
+      wrapper.style.setProperty(
+        '--frozen-first-column-width',
+        `${appliedWidth}px`,
+      );
+
+      // Toggle capped class efficiently
+      const isCapped = measuredWidth > maxPx;
+      table.classList.toggle('frozen-first-col-capped', isCapped);
+    });
+  };
+
+  /**
+   * Sets up observers to keep the frozen first column width in sync with the
+   * actual rendered header width. This prevents sticky columns from overlapping
+   * (e.g., col 2 covering col 3/4) after sorting/filtering or grid re-renders.
+   */
+  setupFrozenColumnResizeObserver = () => {
+    // Clean up any existing observers
+    if (this.frozenColumnResizeObserver) {
+      this.frozenColumnResizeObserver.disconnect();
+      this.frozenColumnResizeObserver = null;
+      this.frozenColumnObservedElement = null;
+    }
+    if (this.frozenColumnMutationObserver) {
+      this.frozenColumnMutationObserver.disconnect();
+      this.frozenColumnMutationObserver = null;
+    }
+    if (this.frozenColumnIntersectionObserver) {
+      this.frozenColumnIntersectionObserver.disconnect();
+      this.frozenColumnIntersectionObserver = null;
+    }
+
+    const inner = this.frozenColumnWrapperRef;
+    if (!inner) return;
+
+    const wrapper = inner.closest?.('.two-col-sticky') || inner;
+    if (!wrapper) return;
+
+    // Initial measurement
+    this.updateFrozenFirstColWidth();
+    requestAnimationFrame(() => this.updateFrozenFirstColWidth());
+
+    // Create debounced update function
+    const debouncedUpdate = debounce(
+      () => {
+        requestAnimationFrame(() => {
+          this.updateFrozenFirstColWidth();
+        });
+      },
+      100,
+      { leading: false, trailing: true },
+    );
+
+    // ResizeObserver for wrapper size changes
+    this.frozenColumnResizeObserver = new ResizeObserver(() => {
+      if (!this.isResizing) {
+        debouncedUpdate();
+      }
+    });
+    this.frozenColumnResizeObserver.observe(wrapper);
+    this.frozenColumnObservedElement = wrapper;
+
+    // MutationObserver for DOM changes
+    let rafId = 0;
+    const scheduleUpdate = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        debouncedUpdate();
+      });
+    };
+
+    this.frozenColumnMutationObserver = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        // Ignore class attribute changes to prevent feedback loops
+        if (m.type === 'attributes' && m.attributeName === 'class') {
+          continue;
+        }
+        scheduleUpdate();
+        break;
+      }
+    });
+    this.frozenColumnMutationObserver.observe(wrapper, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+
+    // IntersectionObserver to pause when not visible (optional optimization)
+    this.frozenColumnIntersectionObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            // Table visible; schedule a width sync
+            debouncedUpdate();
+          }
+        });
+      },
+      { threshold: 0.1 },
+    );
+    this.frozenColumnIntersectionObserver.observe(wrapper);
+  };
+
+  removeNetworkSVG = () => {
+    d3.select('div.tooltip-pieSlice').remove();
+    d3.select('tooltipLink').remove();
+    d3.select(`#svg-${this.state.networkSettings.id}`).remove();
+  };
+
+  handleCancelRequestGetEnrichmentsNetwork = () => {
+    cancelRequestGetEnrichmentsNetwork();
+  };
+
+  getNetworkData = (enrichmentResults, annotation) => {
+    const {
+      enrichmentStudy,
+      enrichmentModel,
+      // enrichmentAnnotation,
+      // pValueType,
+    } = this.props;
+    const cacheKey = `getEnrichmentsNetwork_${enrichmentStudy}_${enrichmentModel}_${annotation}`;
+    if (cacheGetEnrichmentsNetwork[cacheKey] != null) {
+      this.handleEnrichmentNetworkData(
+        cacheGetEnrichmentsNetwork[cacheKey],
+        enrichmentResults,
+      );
+    } else {
+      cancelRequestGetEnrichmentsNetwork();
+      const controller = new AbortController();
+      const cancelToken = controller.signal;
+      cancelRequestGetEnrichmentsNetwork = () => controller.abort();
+      omicNavigatorService
+        .getEnrichmentsNetwork(
+          enrichmentStudy,
+          enrichmentModel,
+          annotation,
+          this.handleGetEnrichmentNetworkError,
+          cancelToken,
+        )
+        .then((getEnrichmentNetworkResponseData) => {
+          if (getEnrichmentNetworkResponseData == null) {
+            return;
+          }
+          cacheGetEnrichmentsNetwork[cacheKey] =
+            getEnrichmentNetworkResponseData;
+          if (
+            getEnrichmentNetworkResponseData.nodes?.length > 0 ||
+            getEnrichmentNetworkResponseData.links?.length > 0 ||
+            getEnrichmentNetworkResponseData.tests?.length > 0
+          ) {
+            this.setState(
+              {
+                unfilteredNetworkData: getEnrichmentNetworkResponseData,
+              },
+              this.handleEnrichmentNetworkData(
+                getEnrichmentNetworkResponseData,
+                enrichmentResults,
+              ),
+            );
+          } else {
+            this.handleGetEnrichmentNetworkError();
+          }
+        })
+        .catch((error) => {
+          console.error('Error during getEnrichmentNetwork', error);
+          this.handleGetEnrichmentNetworkError();
+        });
+    }
+  };
+
+  handleEnrichmentNetworkData = (unfilteredNetworkData, enrichmentResults) => {
+    const { multisetTestsFilteredOut } = this.state;
+    // const pValueTypeParam = pValueType === 'adjusted' ? 0.1 : 1;
+    let networkDataVar = { ...unfilteredNetworkData };
+    var tests = unfilteredNetworkData.tests;
+    const enrichmentResultsDescriptions = [...enrichmentResults].map(
+      (r) => r.description,
+    );
+    if (
+      unfilteredNetworkData.nodes?.length > 0 ||
+      unfilteredNetworkData.links?.length > 0 ||
+      unfilteredNetworkData.tests?.length > 0
+    ) {
+      const filteredNodes = unfilteredNetworkData.nodes.filter((n) =>
+        enrichmentResultsDescriptions.includes(n.description),
+      );
+      networkDataVar.nodes = filteredNodes;
+      this.setState({
+        networkData: networkDataVar,
+        tests: tests,
+        totalNodes: unfilteredNetworkData.nodes.length,
+        totalLinks: unfilteredNetworkData.links.length,
+      });
+      let testsAfterFilter = unfilteredNetworkData.tests;
+      if (multisetTestsFilteredOut.length > 0) {
+        let isArrayBeforeFilter = Array.isArray(testsAfterFilter);
+        if (isArrayBeforeFilter) {
+          testsAfterFilter = testsAfterFilter.filter(function (col) {
+            return !multisetTestsFilteredOut.includes(col);
+          });
+        } else {
+          testsAfterFilter = [];
+        }
+      }
+      let facets = [];
+      let pieData = [];
+      const isArrayAfterFilter = Array.isArray(testsAfterFilter);
+      const testsLengthAfterFilter =
+        typeof testsAfterFilter === 'string' ? 1 : testsAfterFilter.length;
+      if (isArrayAfterFilter && testsLengthAfterFilter > 0) {
+        for (var i = 0; i < testsLengthAfterFilter; i++) {
+          // let rplcSpaces = testsAfterFilter[i].replace(/ /g, '_');
+          // facets.push('EnrichmentMap_pvalue_' + rplcSpaces + '_');
+          facets.push(testsAfterFilter[i]);
+          pieData.push(100 / testsLengthAfterFilter);
+        }
+      } else {
+        if (testsAfterFilter.length > 0) {
+          facets.push(testsAfterFilter);
+          pieData.push(testsAfterFilter);
+        }
+      }
+      this.setState({
+        networkSettings: {
+          ...this.state.networkSettings,
+          facets: facets,
+          propLabel: testsAfterFilter,
+          propData: pieData,
+        },
+        networkDataLoaded: true,
+        networkGraphReady: true,
+      });
+    }
+  };
+
+  handleNetworkGraphReady = (bool) => {
+    this.setState({
+      networkGraphReady: bool,
+    });
+  };
+
+  handleGetEnrichmentNetworkError = () => {
+    this.setState({
+      networkSettings: {
+        ...this.state.networkSettings,
+        facets: [],
+        propLabel: [],
+        propData: [],
+      },
+      networkDataError: true,
+      activeIndexEnrichmentView: 0,
+    });
+  };
+
+  calculateHeight = () => {
+    let containerHeight =
+      this.EnrichmentViewContainerRef.current !== null
+        ? this.EnrichmentViewContainerRef.current.parentElement.offsetHeight
+        : 900;
+    let barcodeHeight =
+      parseInt(localStorage.getItem('horizontalSplitPaneSize'), 10) || 250;
+    // subtracting 120 due to menu and plot margin
+    return containerHeight - barcodeHeight - 120;
+  };
+
+  calculateWidth = () => {
+    let containerWidth =
+      this.EnrichmentViewContainerRef.current !== null
+        ? this.EnrichmentViewContainerRef.current.parentElement.offsetWidth
+        : 1200;
+    let violinWidth =
+      parseInt(localStorage.getItem('verticalSplitPaneSize'), 10) || 525;
+    // subtracting 60 due to plot margin
+    return containerWidth - violinWidth - 60;
+  };
+
+  showBarcodePlot = (barcodeData, dataItem) => {
+    // sorting by statistic is being handled by backend
+    // const barcodeDataSorted = barcodeData.data.sort(
+    //   (a, b) => b.statistic - a.statistic,
+    // );
+    this.setState({
+      isTestDataLoaded: true,
+      barcodeSettings: {
+        ...this.state.barcodeSettings,
+        barcodeData: barcodeData.data,
+        statLabel: barcodeData.labelStat,
+        highLabel: barcodeData.labelHigh,
+        lowLabel: barcodeData.labelLow,
+        highStat: barcodeData.highest,
+        lowStat: barcodeData.lowest,
+        enableBrush: true,
+      },
+    });
+  };
+
+  handleBarcodeChanges = (changes) => {
+    let self = this;
+    const splitPaneData = this.state.barcodeSettings.barcodeData;
+    if (changes.brushedData.length > 0) {
+      const boxPlotArray = _.map(changes.brushedData, function (d) {
+        d.statistic = _.find(splitPaneData, {
+          featureID: d.featureID,
+        }).statistic;
+        d.logFC = _.find(splitPaneData, {
+          featureID: d.featureID,
+        }).logFoldChange;
+        return d;
+      });
+      const reducedBoxPlotArray = _.reduce(
+        boxPlotArray,
+        function (res, datum) {
+          // (res[datum.statLabel] || (res[datum.statLabel] = [])).push({
+          (
+            res[self.state.barcodeSettings.statLabel] ||
+            (res[self.state.barcodeSettings.statLabel] = [])
+          ).push({
+            cpm: datum.logFC,
+            sample: datum.lineID,
+            statistic: datum.statistic,
+            featureID: datum.featureID,
+          });
+          return res;
+        },
+        {},
+      );
+
+      const vData = _.mapValues(reducedBoxPlotArray, function (v) {
+        return { values: v };
+      });
+      const ordered = {};
+      Object.keys(vData)
+        .sort()
+        .forEach(function (key) {
+          ordered[key] = vData[key];
+        });
+
+      this.setState({
+        violinData: ordered,
+        isViolinPlotLoaded: true,
+        barcodeSettings: {
+          ...this.state.barcodeSettings,
+          brushedData: changes.brushedData,
+        },
+      });
+    } else {
+      this.setState({
+        violinData: [],
+        isViolinPlotLoaded: false,
+        barcodeSettings: {
+          ...this.state.barcodeSettings,
+          brushedData: [],
+        },
+        SVGPlotLoaded: false,
+        SVGPlotLoading: false,
+        // plotDataEnrichment: {
+        //   key: null,
+        //   title: '',
+        //   svg: []
+        // }
+      });
+    }
+  };
+
+  handleHighlightedLineReset = (emptyArr) => {
+    this.setState(emptyArr);
+  };
+
+  handleProteinSelected = (toHighlightArray) => {
+    const splitPaneData =
+      this.state.barcodeSettings?.barcodeData ||
+      this.state.filteredDifferentialResults;
+
+    if (!splitPaneData?.length || !Array.isArray(toHighlightArray)) {
+      // Clear selection + clear multi-feature cleanly
+      this.setState(
+        {
+          HighlightedProteins: [],
+          plotMultiFeatureDataLoaded: true,
+          plotMultiFeatureData: { key: null, title: '', svg: [] },
+          plotMultiFeatureDataLength: 0,
+        },
+        () => {
+          // cancel any pending reloads
+          this.reloadMultifeaturePlotEnrichment?.cancel?.();
+        },
+      );
+      return;
+    }
+
+    // Cancel pending debounced reload so stale work doesn't fire later
+    this.reloadMultifeaturePlotEnrichment?.cancel?.();
+
+    const featureKey = 'featureID';
+
+    // Normalize + dedupe to consistent shape and small payload
+    const normalize = (arr) => {
+      const out = [];
+      const seen = new Set();
+
+      for (const item of arr) {
+        if (!item) continue;
+
+        const id =
+          item.featureID ||
+          item.key ||
+          item.id ||
+          (featureKey ? item[featureKey] : null);
+
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+
+        out.push({
+          featureID: id,
+          key: id,
+          statistic: item.statistic,
+          sample: item.sample,
+          cpm: item.cpm,
+        });
+      }
+
+      // Sort only if statistic exists (otherwise keep click order)
+      const hasStat = out.some((x) => typeof x?.statistic === 'number');
+      if (hasStat) {
+        out.sort((a, b) => (b.statistic || 0) - (a.statistic || 0));
+      }
+
+      return out;
+    };
+
+    const normalized = normalize(toHighlightArray);
+
+    // Immediate visual feedback (don’t wait for debounce)
+    const shouldLoadMulti =
+      this.state.plotMultiFeatureAvailable && normalized.length >= 2;
+
+    this.setState(
+      {
+        HighlightedProteins: normalized,
+        ...(shouldLoadMulti ? { plotMultiFeatureDataLoaded: false } : {}),
+      },
+      () => {
+        this.reloadMultifeaturePlotEnrichment(normalized);
+      },
+    );
+  };
+
+  /**
+   * Handles the selection of a single protein in the visualization.
+   *
+   * @param {string} featureId - The ID of the protein feature to select.
+   * @returns {void}
+   */
+  handleSingleProteinSelected = (featureId) => {
+    const featureKey = 'featureID';
+    const splitPaneData = this.state.barcodeSettings.barcodeData;
+
+    // Helper to create cleared plot state
+    const getClearedPlotState = () => ({
+      selectedProteinId: '',
+      SVGPlotLoaded: false,
+      SVGPlotLoading: false,
+      plotDataEnrichment: {
+        key: null,
+        svg: [],
+        ...this.state.plotDataEnrichment,
+      },
+      plotDataEnrichmentLength: 0,
+    });
+
+    // If no feature or no data, just clear (single atomic setState)
+    if (!featureId || !splitPaneData || splitPaneData.length === 0) {
+      cancelRequestEnrichmentGetPlot();
+      this.setState(getClearedPlotState());
+      return;
+    }
+
+    const prevSelected = this.state.selectedProteinId;
+    // Toggle: clicking same row/dot again clears selection
+    const nextSelected = prevSelected === featureId ? '' : featureId;
+
+    // If clearing selection (deselect), do single atomic setState
+    if (!nextSelected) {
+      cancelRequestEnrichmentGetPlot();
+      this.setState(getClearedPlotState());
+      return;
+    }
+
+    // If selecting a new feature, set loading state and fetch plot
+    this.setState({
+      selectedProteinId: nextSelected,
+      SVGPlotLoaded: false,
+      SVGPlotLoading: true,
+    });
+
+    const dataItem = splitPaneData.find((i) => i[featureKey] === nextSelected);
+    const id = dataItem ? dataItem[featureKey] : nextSelected;
+
+    this.getPlot(id);
+  };
+
+  handleSingleProteinSelectedFromUI = (featureId) => {
+    // dot click, violin click, table row click → allow tab auto-switch
+    this.setState(
+      {
+        enableSvgTabChangeOnSelection: true,
+      },
+      () => {
+        this.handleSingleProteinSelected(featureId);
+      },
+    );
+  };
+
+  /**
+   * Handles protein selection triggered from the MultiFeature plot.
+   *
+   * @param {string} featureId - The ID of the protein feature to select.
+   * @returns {void}
+   *
+   */
+  handleSingleProteinSelectedFromMultiPlot = (featureId) => {
+    // MultiFeature Plotly click → DO NOT auto-switch tabs
+    this.setState(
+      {
+        enableSvgTabChangeOnSelection: false,
+      },
+      () => {
+        this.handleSingleProteinSelected(featureId);
+      },
+    );
+  };
+
+  /**
+   * Handles clicks on Plotly multi-feature plots (heatmaps).
+   * Finds the clicked feature among highlighted proteins and selects it.
+   *
+   *
+   * @param {string} featureArg - The feature label from Plotly click event
+   * @param {boolean} exactLabel - If true, featureArg is exact; if false, it's a substring
+   */
+  handlePlotlyClickEnrichment = (featureArg, exactLabel) => {
+    const { HighlightedProteins } = this.state;
+
+    const featureKey = this.props.filteredDifferentialFeatureIdKey;
+
+    const splitPaneData = this.state.filteredDifferentialResults;
+
+    if (!splitPaneData?.length || !HighlightedProteins?.length) return;
+
+    // Filter to only highlighted proteins (same as Differential)
+    const relevantFeatures = splitPaneData.filter((row) =>
+      HighlightedProteins.some(
+        (hp) => (hp.featureID || hp.key || hp.id) === row[featureKey],
+      ),
+    );
+
+    let featureData = null;
+    if (exactLabel) {
+      // Exact match: check if featureArg exists in any column value
+      featureData = relevantFeatures.find((row) => {
+        const rowValues = Object.values(row);
+        return rowValues.includes(featureArg);
+      });
+    } else {
+      // Substring match: check if any non-numeric value contains featureArg
+      featureData = relevantFeatures.find((row) => {
+        const rowValues = Object.values(row);
+        const stringValues = rowValues.filter(
+          (v) => typeof v === 'string' || isNaN(v),
+        );
+        return stringValues.some((v) => featureArg.includes(String(v)));
+      });
+    }
+    if (featureData) {
+      const feature = featureData[featureKey];
+      // Use the "from multi plot" handler to avoid auto-switching tabs
+      this.handleSingleProteinSelectedFromMultiPlot(feature);
+    }
+  };
+
+  /**
+   * Removes a single feature from the highlighted proteins list.
+   * Called when user clicks the X on an individual feature chip in the gear popup.
+   *
+   *
+   * @param {string} featureToRemove - The feature key/ID to remove
+   */
+  removeSelectedFeatureEnrichment = (featureToRemove) => {
+    const { HighlightedProteins } = this.state;
+
+    if (!HighlightedProteins?.length) return;
+
+    // Filter out the feature to remove (check all possible key properties)
+    const updatedHighlightedProteins = HighlightedProteins.filter((protein) => {
+      const proteinKey = protein.featureID || protein.key || protein.id;
+      return proteinKey !== featureToRemove;
+    });
+
+    // Use the central selection handler (mirrors Differential's onHandleHighlightedFeaturesDifferential)
+    // This ensures all side effects (barcode/violin/table sync) happen consistently
+    this.handleProteinSelected(updatedHighlightedProteins);
+  };
+
+  /**
+   * Debounced reload of multi-feature plot after selection changes.
+   *
+   * WHY NOT USE getMultifeaturePlotTransitionEnrichment:
+   * - That method reads from this.state.HighlightedProteins
+   * - After setState, state may not be updated yet (async)
+   * - Passing the array directly ensures we use the correct data
+   *
+   * @param {Array} selectedProteins - The current selection (post-removal)
+   */
+  reloadMultifeaturePlotEnrichment = _.debounce((selectedProteins) => {
+    if (!this.state.plotMultiFeatureAvailable) return;
+
+    // Need 2+ features
+    if (!selectedProteins || selectedProteins.length < 2) {
+      this.setState({
+        plotMultiFeatureData: { key: null, title: '', svg: [] },
+        plotMultiFeatureDataLength: 0,
+        plotMultiFeatureDataLoaded: true,
+      });
+      return;
+    }
+
+    const featureIds = selectedProteins
+      .map((p) => p.featureID || p.key || p.id)
+      .filter(Boolean);
+
+    if (featureIds.length < 2) return;
+
+    // Clear old SVGs ONLY if there is zero overlap (avoids confusion)
+    this.setState((prev) => {
+      const prevKey = prev.plotMultiFeatureData?.key || '';
+      const prevIds = new Set(
+        prevKey ? prevKey.split(',').filter(Boolean) : [],
+      );
+      const newIds = new Set(featureIds);
+      const hasOverlap = [...newIds].some((id) => prevIds.has(id));
+
+      return {
+        plotMultiFeatureDataLoaded: false,
+        ...(hasOverlap
+          ? {}
+          : {
+              plotMultiFeatureData: { key: null, title: '', svg: [] },
+              plotMultiFeatureDataLength: 0,
+            }),
+      };
+    });
+
+    this.getMultifeaturePlotEnrichment(featureIds);
+  }, 300);
+
+  /**
+   * Tracks when the gear popup (feature bullpen) opens/closes.
+   *
+   *
+   * @param {boolean} isOpen - true if popup is opening, false if closing
+   * @param {boolean} delayClose - true if close should be delayed (for click-outside handling)
+   */
+  handleMultiFeatureBullpenOpenChange = (isOpen, delayClose = false) => {
+    const OVERLAY_CLOSE_DELAY_MS = 10;
+
+    // Clear any pending delayed close
+    if (this.multiFeatureBullpenCloseTimeout) {
+      clearTimeout(this.multiFeatureBullpenCloseTimeout);
+      this.multiFeatureBullpenCloseTimeout = null;
+    }
+
+    if (isOpen) {
+      this.setState({ multiFeatureBullpenOpen: true });
+      return;
+    }
+
+    if (delayClose) {
+      // Delay close slightly to handle click-outside events
+      this.multiFeatureBullpenCloseTimeout = setTimeout(() => {
+        this.setState({ multiFeatureBullpenOpen: false });
+        this.multiFeatureBullpenCloseTimeout = null;
+      }, OVERLAY_CLOSE_DELAY_MS);
+    } else {
+      this.setState({ multiFeatureBullpenOpen: false });
+    }
+  };
+
+  getPlot = (featureId) => {
+    const {
+      enrichmentPlotTypes,
+      enrichmentTest,
+      uData,
+      enrichmentModelIds,
+      enrichmentModelsAndAnnotations,
+      enrichmentPlotDescriptions,
+      enrichmentAnnotationIdsCommon,
+    } = this.state;
+    const { enrichmentStudy, enrichmentModel, enrichmentAnnotation } =
+      this.props;
+    let id = featureId != null ? featureId : '';
+    let plotDataEnrichmentVar = { key: '', title: '', svg: [] };
+    plotDataEnrichmentVar.title = this.state.plotDataEnrichment.title;
+    plotDataEnrichmentVar.key = id;
+    this.setState({ svgExportName: id });
+    cancelRequestEnrichmentGetPlot();
+    const controller = new AbortController();
+    const cancelToken = controller.signal;
+    cancelRequestEnrichmentGetPlot = () => controller.abort();
+    let self = this;
+    let plots = enrichmentPlotTypes;
+    if (plots.length) {
+      plots = enrichmentPlotTypes.filter(
+        (p) => !p.plotType.includes('multiFeature'),
+      );
+      if (plots.length) {
+        // refined for dynamically sized plots on single-threaded servers (running R locally), we're using a race condition to take the first url and handle/display it asap; after that, we're using allSettled to wait for remaining urls, and then sending them all to the component as props
+        const promises = plots
+          .map((plot) => {
+            if (plot.plotType.includes('multiFeature')) {
+              return undefined;
+              // enrichment doesn't support multi-feature plotting yet
+              // thus, we do not use `getIdArg`
+            }
+            // plot metadata will now include the field 'models'. This field should be referenced for all plots of type 'multimodel' in the following way:
+            // 1) if 'models' exists and !='all' AND the currently selected model is not in the character vector assigned to 'models' THEN do not render this plot.
+            // 2) if 'models' exists and != 'all' AND the currently selected model is in this character vector, only pass the specified models to plotStudy, starting with the currently selected model.
+            // The existing conventions for intersections of tests across models still applies, but only to the set of models specified following the execution of the above logic.
+            const plotMetadataSpecificPlot =
+              enrichmentPlotDescriptions[plot.plotID];
+            const designatedModels = plotMetadataSpecificPlot?.models || null;
+            const designatedModelsMultiModelExists =
+              designatedModels &&
+              designatedModels !== 'all' &&
+              designatedModels.includes(enrichmentModel);
+            const enrichmentModelIdsOverride = designatedModelsMultiModelExists
+              ? designatedModels
+              : enrichmentModelIds;
+            // end of enrichmentModelIdsOverride
+            const isMultiModelMultiTestVar = isMultiModelMultiTest(
+              plot.plotType,
+            );
+            const testIdNotCommon =
+              !enrichmentAnnotationIdsCommon.includes(enrichmentAnnotation);
+            let testsArg = [];
+            // don't get testsArg for MultiModelMultiTest plot when test is not common
+            if (isMultiModelMultiTestVar && testIdNotCommon) {
+              testsArg = [];
+            } else {
+              testsArg = getTestsArg(
+                plot.plotType,
+                enrichmentModelIdsOverride,
+                uData,
+                enrichmentTest,
+              );
+            }
+            let modelsArg = getModelsArg(
+              plot.plotType,
+              enrichmentModelIdsOverride,
+              uData,
+              enrichmentModel,
+              enrichmentModelsAndAnnotations, // listStudies.enrichments
+              null,
+              enrichmentAnnotationIdsCommon,
+            );
+            return omicNavigatorService
+              .plotStudyReturnSvgUrl(
+                enrichmentStudy,
+                modelsArg,
+                id,
+                plot.plotID,
+                plot.plotType,
+                testsArg,
+                null,
+                cancelToken,
+              )
+              .then((svg) => ({ svg, plotType: plot }));
+          })
+          .filter(Boolean);
+        Promise.race(promises)
+          .then((svg) => {
+            plotDataEnrichmentVar.svg = [svg];
+            self.handleSVG(plotDataEnrichmentVar);
+          })
+          // Ignore error in first race - Handled later
+          .catch((error) => undefined)
+          .then(() => {
+            if (promises.length > 1) {
+              const all = Promise.allSettled(promises);
+              return all;
+            }
+          })
+          .then((promiseResults) => {
+            if (!promiseResults) {
+              // If promise.length===1, then this is undefined
+              return;
+            }
+            const svgArray = promiseResults
+              .filter((result) => result.status === 'fulfilled')
+              .map(({ value }) => value);
+            /**
+             * @type {Error[]}
+             */
+            const errors = promiseResults
+              .filter((result) => result.status === 'rejected')
+              .map(({ reason }) => reason);
+            if (svgArray.length) {
+              self.handleSVG({ ...plotDataEnrichmentVar, svg: svgArray });
+            }
+            if (errors.length === promises.length) {
+              throw new Error('Error during plotStudyReturnSvgUrl');
+            }
+            if (errors.length) {
+              console.error(`Error during plotStudyReturnSvgUrl`, errors);
+              // Handle errors coming in - warn users
+            }
+          })
+          .catch((error) => {
+            console.error(`Error during plotStudyReturnSvgUrl`, error);
+            // if one of many plots fails we don't want to alter the UI, however eventually consider how best to handle failure when single feature enrichmentPlotTypes length is 1
+            // self.handlePlotStudyError();
+          });
+      }
+    }
+  };
+
+  handleEnrichmentSVGSizeChange = (id) => {
+    // keep whatever dimension is less (height or width)
+    // then multiply the other dimension by original svg ratio (height 595px, width 841px)
+    let EnrichmentPlotSVGHeight = this.calculateHeight();
+    let EnrichmentPlotSVGWidth = this.calculateWidth();
+    // EnrichmentPlotSVGHeight = EnrichmentPlotSVGWidth * 0.70749;
+    if (EnrichmentPlotSVGHeight + 60 > EnrichmentPlotSVGWidth) {
+      EnrichmentPlotSVGHeight = EnrichmentPlotSVGWidth * 0.70749;
+    } else {
+      EnrichmentPlotSVGWidth = EnrichmentPlotSVGHeight * 1.41344;
+    }
+    this.setState(
+      {
+        SVGPlotLoaded: true,
+        SVGPlotLoading: false,
+        enrichmentPlotSVGHeight: EnrichmentPlotSVGHeight,
+        enrichmentPlotSVGWidth: EnrichmentPlotSVGWidth,
+      },
+      function () {
+        this.getPlot(id);
+      },
+    );
+  };
+
+  handleSVG = (plotDataEnrichmentVar) => {
+    this.setState({
+      plotDataEnrichment: plotDataEnrichmentVar,
+      plotDataEnrichmentLength: plotDataEnrichmentVar.svg?.length || 0,
+      SVGPlotLoaded: true,
+      SVGPlotLoading: false,
+    });
+  };
+
+  handlePlotStudyError = () => {
+    this.setState({
+      // SVGPlotLoaded: false,
+      SVGPlotLoading: false,
+      // plotDataEnrichment: {
+      //   ...this.state.plotDataEnrichment,
+      //   svg: []
+      // },
+    });
+  };
+
+  handleGetBarcodeDataError = () => {
+    this.testSelectedTransition(false);
+    this.handleSearchChangeEnrichment(
+      {
+        enrichmentStudy: this.props.enrichmentStudy || '',
+        enrichmentModel: this.props.enrichmentModel || '',
+        enrichmentAnnotation: this.props.enrichmentAnnotation || '',
+        enrichmentTest: '',
+        enrichmentTestAndDescription: '',
+      },
+      false,
+    );
+  };
+
+  testSelected = (
+    enrichmentStudy,
+    enrichmentModel,
+    enrichmentAnnotation,
+    dataItem,
+    test,
+  ) => {
+    this.testSelectedTransition(true);
+    const TestSiteVar = `${test}:${dataItem.description}`;
+    this.handleSearchChangeEnrichment(
+      {
+        enrichmentStudy: this.props.enrichmentStudy || '',
+        enrichmentModel: this.props.enrichmentModel || '',
+        enrichmentAnnotation: this.props.enrichmentAnnotation || '',
+        enrichmentTestAndDescription: TestSiteVar || '',
+      },
+      true,
+    );
+    let term = dataItem?.termID || '';
+    let description = dataItem?.description || '';
+    this.setState({
+      plotDataEnrichment: {
+        ...this.state.plotDataEnrichment,
+        key: `${test}:${description}`,
+        title: `${test}:${description}`,
+        dataItem: dataItem,
+      },
+      enrichmentNameLoaded: true,
+      enrichmentDataItem: dataItem,
+      enrichmentTerm: term,
+      enrichmentTest: test,
+      HighlightedProteins: [],
+      selectedProteinId: '',
+      SVGPlotLoading: true,
+      SVGPlotLoaded: false,
+      isViolinPlotLoaded: false,
+      isTestDataLoaded: false,
+      barcodeSettings: {
+        ...this.state.barcodeSettings,
+        barcodeData: [],
+        brushedData: [],
+      },
+    });
+    omicNavigatorService
+      .getBarcodeData(
+        enrichmentStudy,
+        enrichmentModel,
+        test,
+        enrichmentAnnotation,
+        term,
+        this.handleGetBarcodeDataError,
+      )
+      .then((barcodeDataResponse) => {
+        if (barcodeDataResponse == null) {
+          return;
+        }
+        if (barcodeDataResponse?.data?.length > 0) {
+          const logFoldChangeArr = barcodeDataResponse.data.map(
+            (b) => b.logFoldChange,
+          );
+          const isZero = (logFoldChangeVal) => logFoldChangeVal === 0;
+          if (logFoldChangeArr.every(isZero)) {
+            this.setState({
+              displayViolinPlot: false,
+            });
+          } else {
+            this.setState({
+              displayViolinPlot: true,
+            });
+          }
+          this.showBarcodePlot(barcodeDataResponse, dataItem);
+        } else {
+          this.setState({
+            displayViolinPlot: false,
+          });
+          this.showBarcodePlot(barcodeDataResponse, dataItem);
+          // empty barcode data array - we've decided to render the table and plots without barcode and violin
+          // this.handleGetBarcodeDataError();
+        }
+      })
+      .catch((error) => {
+        console.error('Error during getBarcodeData', error);
+      });
+  };
+
+  getTableHelpers = () => {
+    let addParams = {};
+    addParams.barcodeData = (
+      enrichmentStudy,
+      enrichmentModel,
+      enrichmentAnnotation,
+      dataItem,
+      test,
+    ) => {
+      let self = this;
+      return function () {
+        self.testSelected(
+          enrichmentStudy,
+          enrichmentModel,
+          enrichmentAnnotation,
+          dataItem,
+          test,
+        );
+        //stored annodationdata and won't call the service after the first time...reset it when sc changes
+        // } else {
+        //   dataItem.Annotation = _.find(self.state.annotationData, {
+        //     Description: dataItem.description
+        //   }).Key;
+        //   let term = dataItem.Annotation;
+
+        //   self.setState({
+        //     plotDataEnrichment: {
+        //       ...self.state.plotDataEnrichment,
+        //       key: `${test} : ${dataItem.description}`,
+        //       title: `${test} : ${dataItem.description}`
+        //     },
+        //     enrichmentNameLoaded: true,
+        //     enrichmentDataItem: dataItem,
+        //     enrichmentTerm: term
+        //   });
+
+        //   omicNavigatorService
+        //     .getBarcodeData(
+        //       enrichmentStudy + 'plots',
+        //       enrichmentModel,
+        //       enrichmentAnnotation,
+        //       test,
+        //       dataItem.Annotation
+        //     )
+        //     .then(barcodeDataResponse => {
+        //       let BardcodeInfoObj = JSON.parse(barcodeDataResponse['object']);
+        //       let highest = barcodeDataResponse['highest'][0];
+        //       // if (!this.state.modelsToRenderViolin.includes(this.enrichmentModel)){
+        //       //   this.setState({ sizeVal = '0%' )};
+        //       // } else {
+        //       //   this.setState({ sizeVal = '50%')};
+        //       // }
+
+        //       showBarcodePlotCb(barcodeDataResponse);
+        //     });
+        // }
+      };
+    };
+    this.setState({
+      additionalTemplateInfoEnrichmentTable: addParams,
+    });
+  };
+
+  handleLegendOpen = () => {
+    this.setState({ legendIsOpen: true }, () => this.createLegend());
+  };
+
+  handleLegendClose = () => {
+    this.setState({ legendIsOpen: false });
+  };
+
+  createLegend = () => {
+    const self = this;
+
+    const propTest = this.state?.networkSettings?.propLabel;
+    const hasValidPropLabel =
+      typeof propTest === 'string' || Array.isArray(propTest);
+    if (
+      !hasValidPropLabel ||
+      (Array.isArray(propTest) && propTest.length === 0)
+    ) {
+      return;
+    }
+    const singleTest = typeof this.state.networkSettings.propLabel === 'string';
+
+    var svg = d3
+      .selectAll('.legend')
+      .append('svg')
+      .data([this.state.networkSettings.propLabel])
+      .attr('width', '100%')
+      .attr('height', '100%')
+      .attr('viewBox', '0 0 300 250')
+      .attr('preserveAspectRatio', 'xMinYMin meet');
+
+    var legend = svg.append('g');
+    legend.append('g').attr('class', 'slices');
+    legend.append('g').attr('class', 'labels');
+    legend.append('g').attr('class', 'lines');
+    legend.append('g').attr('class', 'gradient');
+    legend.append('g').attr('class', 'mostSignificant');
+
+    var width = 300,
+      height = 300,
+      radius = 50;
+
+    let pie = d3.pie().sort(null).value(1);
+    let arc = d3.arc().outerRadius(radius).innerRadius(0);
+
+    if (singleTest) {
+      arc = d3
+        .arc()
+        .innerRadius(0)
+        .outerRadius(90)
+        .startAngle(0)
+        .endAngle(2 * Math.PI);
+    }
+
+    legend.attr('transform', 'translate(' + width / 2 + ',' + height / 3 + ')');
+
+    /* ------- PIE SLICES -------*/
+    var slice = legend.select('.slices').selectAll('path.slice').data(pie);
+
+    slice
+      .enter()
+      .insert('path')
+      .style('fill', '#d3d3d3')
+      .attr('class', 'slice')
+      .attr('stroke', 'black')
+      .attr('d', arc);
+
+    /* ------- TEXT LABELS -------*/
+    var text = legend.select('.labels').selectAll('text').data(pie);
+    if (!singleTest) {
+      text
+        .enter()
+        .append('text')
+        .attr('font-family', 'Lato,Arial,Helvetica,sans-serif')
+        .attr('dy', '.35em')
+        // .attr('transform', 'rotate(' + 10 + ')')
+        .style('font-size', '.8em')
+        .text(function (d) {
+          return d.data;
+        })
+        .attr('x', function (d) {
+          var a = d.startAngle + (d.endAngle - d.startAngle) / 2 - Math.PI / 2;
+          d.cx = Math.cos(a) * (radius - 10);
+          return (d.x = Math.cos(a) * (radius + 30));
+        })
+        .attr('y', function (d) {
+          var a = d.startAngle + (d.endAngle - d.startAngle) / 2 - Math.PI / 2;
+          d.cy = Math.sin(a) * (radius - 10);
+          return (d.y = Math.sin(a) * (radius + 30));
+        })
+        .style('text-anchor', 'middle')
+        .each(function (d) {
+          var bbox = this.getBBox();
+          d.sx = d.x - bbox.width / 2 - 2;
+          d.ox = d.x + bbox.width / 2 + 2;
+          d.sy = d.oy = d.y + 5;
+        });
+
+      text
+        .enter()
+        .append('path')
+        .attr('class', 'pointer')
+        .style('fill', 'none')
+        .style('stroke', 'black')
+
+        .attr('d', function (d) {
+          if (d.cx > d.ox) {
+            return (
+              'M' +
+              d.sx +
+              ',' +
+              d.sy +
+              'L' +
+              d.ox +
+              ',' +
+              d.oy +
+              ' ' +
+              d.cx +
+              ',' +
+              d.cy
+            );
+          } else {
+            return (
+              'M' +
+              d.ox +
+              ',' +
+              d.oy +
+              'L' +
+              d.sx +
+              ',' +
+              d.sy +
+              ' ' +
+              d.cx +
+              ',' +
+              d.cy
+            );
+          }
+        });
+    }
+
+    if (singleTest) {
+      text
+        .enter()
+        .append('text')
+        .attr('font-family', 'Lato,Arial,Helvetica,sans-serif')
+        .attr('dy', '.35em')
+        // .attr('transform', 'rotate(' + 10 + ')')
+        .style('font-size', '.8em')
+        .text(function (d) {
+          return d.data;
+        });
+      text
+        .enter()
+        .append('path')
+        .attr('class', 'pointer')
+        .style('fill', 'none')
+        .style('stroke', 'black');
+    }
+
+    // Create the svg:defs element and the main gradient definition.
+    var svgDefs = svg.append('defs');
+
+    var mainGradient = svgDefs
+      .append('linearGradient')
+      .attr('id', 'mainGradient');
+
+    // Create the stops of the main gradient. Each stop will be assigned
+    // a class to style the stop using CSS.
+    mainGradient.append('stop').attr('class', 'stop-left').attr('offset', '0');
+
+    mainGradient
+      .append('stop')
+      .attr('class', 'stop-middle')
+      .attr('offset', '0.5');
+
+    mainGradient.append('stop').attr('class', 'stop-right').attr('offset', '1');
+
+    // Use the gradient to set the shape fill, via CSS.
+    var gradient = legend.selectAll('.gradient');
+
+    gradient
+      .append('rect')
+      .classed('filled', true)
+      .attr('x', -50)
+      .attr('y', this.state.networkSettings.propLabel.length > 2 ? 100 : 60)
+      .attr('width', 100)
+      .attr('height', 15);
+
+    var y = d3.scaleLinear().range([0, 50, 100]).domain([0, 0.1, 1]);
+
+    var yAxis = d3.axisBottom().scale(y).ticks(2);
+
+    gradient
+      .append('g')
+      .attr('class', 'y axis')
+      .attr('transform', 'translate(-50,115)')
+      .call(yAxis);
+    gradient
+      .append('text')
+      .attr('font-family', 'Lato,Arial,Helvetica,sans-serif')
+      .attr('x', -10)
+      .attr('y', 2)
+      .attr('dy', '.35em')
+      .text('pValue')
+      .attr('transform', 'translate(-85,105)');
+
+    //most  color scale
+    var mostSignificantColorScale = d3
+      .scaleLinear()
+      .range(self.state.networkSettings.mostSignificantColorScale);
+    //Append a linearGradient element to the defs and give it a unique id
+    var mostSignificantGradient = svgDefs
+      .append('linearGradient')
+      .attr('id', 'most-significant-linear-gradient')
+      // DIAGONAL GRADIENT
+      .attr('x1', '70%')
+      .attr('y1', '70%')
+      .attr('x2', '30%')
+      .attr('y2', '30%');
+
+    //Append multiple color stops by using D3's data/enter step
+    mostSignificantGradient
+      .selectAll('stop')
+      .data(mostSignificantColorScale.range())
+      .enter()
+      .append('stop')
+      .attr('offset', function (d, i) {
+        return i / (mostSignificantColorScale.range().length - 1);
+      })
+      .attr('stop-color', function (d) {
+        return d;
+      });
+
+    const mostSignificant = legend.selectAll('.mostSignificant');
+
+    mostSignificant
+      .append('text')
+      .attr('font-family', 'Lato,Arial,Helvetica,sans-serif')
+      .attr('x', -120)
+      .attr('y', 150)
+      .attr('dy', '.35em')
+      .text('Most significant of all tests in chart');
+
+    // SQUARE
+    mostSignificant
+      .append('rect')
+      .attr('x', 100)
+      .attr('y', 141)
+      .attr('width', 20)
+      .attr('height', 20)
+      .style('stroke', '#000')
+      .style('fill', 'url(#most-significant-linear-gradient)');
+
+    // CIRCLE
+    // mostSignificant
+    //   .append('circle')
+    //   .attr('r', 10)
+    //   .attr('cx', 110)
+    //   .attr('cy', 151)
+    //   .style('stroke', 'black')
+    //   .style('fill', 'ffd700')
+    //   .style('stroke-width', '1')
+    //   .style('stroke', 'black');
+
+    // SLICE
+    // mostSignificant
+    //   .append('circle')
+    //   .attr('r', 5)
+    //   .attr('cx', 100)
+    //   .attr('cy', 151)
+    //   .style('fill', 'transparent')
+    //   .style('stroke', 'ffd700')
+    //   .style('stroke-width', '20')
+    //   .style('stroke-dasharray', 'calc(35 * 31.42 / 140) 31.42')
+  };
+
+  // getLegend = () => {
+  //   let tests = this.state.networkSettings.propLabel;
+  //   // let pieSlices = tests.length;
+  //   let labels = {};
+  //   let lines = {};
+  //   let gradient = {};
+  //   let width = 300;
+  //   let height = 300;
+  //   let x = width / 2;
+  //   let y = height / 2;
+  //   let radius = 50;
+  //   let slices = d3.pie().value(1);
+
+  //   let arc = d3
+  //     .arc()
+  //     .outerRadius(radius)
+  //     .innerRadius(0);
+
+  //   function getXattribute(d) {
+  //     let a = d.startAngle + (d.endAngle - d.startAngle) / 2 - Math.PI / 2;
+  //     d.cx = Math.cos(a) * (radius - 10);
+  //     return (d.x = Math.cos(a) * (radius + 30));
+  //   }
+
+  //   function getYattribute(d) {
+  //     let a = d.startAngle + (d.endAngle - d.startAngle) / 2 - Math.PI / 2;
+  //     d.cy = Math.sin(a) * (radius - 10);
+  //     return (d.y = Math.sin(a) * (radius + 30));
+  //   }
+
+  //   let legend = slices.map(s => {
+  //     return (
+  //       <>
+  //         <g className="slices">
+  //           <path className="slice" stroke="#000" d={arc} fill="#d3d3d3" />
+  //         </g>
+  //         <g className="prefix__labels">
+  //           <text
+  //             dy=".35em"
+  //             x={getXattribute(s)}
+  //             y={getYattribute(s)}
+  //             fontSize=".75em"
+  //             textAnchor="middle"
+  //             transform={`translate(${width / 2} ${height / 3})`}
+  //           >
+  //             {s.data}
+  //           </text>
+  //           <path
+  //             className="prefix__pointer"
+  //             d="M250.108 48.431h-87.079l15.255 23.285M247.162 161.569h-81.187l12.31-33.285M66.736 161.569h53.39l1.59-33.285M132.853 48.431H54.01l67.706 23.285"
+  //             fill="none"
+  //             stroke="#000"
+  //           />
+  //         </g>
+  //         <g className="prefix__gradient">
+  //           <path className="prefix__filled" d="M100 200h100v15H100z" />
+  //           <g
+  //             className="prefix__y prefix__axis"
+  //             fill="none"
+  //             fontSize={10}
+  //             fontFamily="sans-serif"
+  //             textAnchor="middle"
+  //           >
+  //             <path
+  //               className="prefix__domain"
+  //               stroke="currentColor"
+  //               d="M100.5 221v-5.5h100v5.5"
+  //             />
+  //             <g className="prefix__tick">
+  //               <path stroke="currentColor" d="M100.5 215v6" />
+  //               <text
+  //                 fill="currentColor"
+  //                 y={9}
+  //                 dy=".71em"
+  //                 transform="translate(100.5 215)"
+  //               >
+  //                 {'0.0'}
+  //               </text>
+  //             </g>
+  //           </g>
+  //           <text y={s.data} dy=".35em" transform="translate(65 205)">
+  //             {'pValue'}
+  //           </text>
+  //         </g>
+  //       </>
+  //     );
+  //   });
+
+  //   return (
+  //     <svg viewBox="0 0 300 250" preserveAspectRatio="xMinYMin meet">
+  //       {legend}
+  //       <defs>
+  //         <linearGradient id="prefix__mainGradient">
+  //           <stop offset={0} stopColor="red" />
+  //           <stop offset={0.5} stopColor="#fff" />
+  //           <stop offset={1} stopColor="#00f" />
+  //         </linearGradient>
+  //       </defs>
+  //     </svg>
+  //   );
+  // };
+
+  backToTable = () => {
+    this.setState({
+      isTestDataLoaded: false,
+      isTestSelected: false,
+      enrichmentTest: '',
+      enrichmentNameLoaded: false,
+      SVGPlotLoaded: false,
+      SVGPlotLoading: false,
+      plotDataEnrichment: {
+        key: null,
+        title: '',
+        svg: [],
+        dataItem: [],
+      },
+    });
+    this.handleSearchChangeEnrichment(
+      {
+        enrichmentStudy: this.props.enrichmentStudy || '',
+        enrichmentModel: this.props.enrichmentModel || '',
+        enrichmentAnnotation: this.props.enrichmentAnnotation || '',
+        enrichmentTestAndDescription: '',
+      },
+      false,
+    );
+    this.handleLegendClose();
+  };
+
+  testSelectedTransition = (bool) => {
+    this.setState({
+      isTestSelected: bool,
+    });
+  };
+
+  // cannot use this unless we can prevent first column (featureID) from being reordered
+  // columnReorder = columns => {
+  //   this.setState({ enrichmentColumns: columns });
+  //   const columnsArr = columns.map(e => {
+  //     return e.title;
+  //   });
+  //   const uDataRelevantFields = _.filter(columnsArr, function(key) {
+  //     return key !== 'description' && key !== 'Annotation';
+  //   });
+  //   // multiset svg rebuilds based on uData...if there are no results we need to override this from being passed down
+  //   if (uDataRelevantFields.length !== 0) {
+  //     this.setState({
+  //       uData: uDataRelevantFields,
+  //     });
+  //   }
+  // };
+
+  handleTableNetworkTabChange = (e, { activeIndex }) => {
+    sessionStorage.setItem(`enrichmentViewTab`, activeIndex);
+    this.setState({ activeIndexEnrichmentView: activeIndex });
+    if (activeIndex === 1) {
+      this.handleLegendOpen();
+    }
+  };
+
+  getMessage = () => {
+    const { enrichmentStudy, enrichmentModel, enrichmentAnnotation } =
+      this.props;
+    if (enrichmentStudy === '') {
+      return 'study';
+    } else if (enrichmentModel === '') {
+      return 'model';
+    } else if (enrichmentAnnotation === '') {
+      return 'database';
+    } else return '';
+  };
+
+  getView = () => {
+    const message = this.getMessage();
+
+    // Fullscreen overlay: reuse Differential PlotsOverlay with Enrichment breadcrumbs.
+
+    const showOverlay = this.state.plotOverlayVisibleEnrichment;
+
+    // Build overlay view (kept mounted alongside split panes to preserve state)
+    let overlayView = null;
+    if (showOverlay) {
+      const { enrichmentPlotTypes, enrichmentMultiFeaturePlotTypes } =
+        this.state;
+
+      const singleFeaturePlotTypes = (enrichmentPlotTypes || []).filter(
+        (p) => !p.plotType?.includes('multiFeature'),
+      );
+      const multiFeaturePlotTypes = enrichmentMultiFeaturePlotTypes || [];
+
+      const isMulti = this.state.isMultiFeatureOverlayEnrichment;
+
+      const plotOverlayData = this.state.plotOverlayDataEnrichment;
+      const plotOverlayLoaded = this.state.plotOverlayLoadedEnrichment;
+      const plotOverlayDataLength = plotOverlayData?.svg?.length || 0;
+
+      const transformedHighlightedFeatures = (
+        this.state.HighlightedProteins || []
+      ).map((protein) => ({
+        key: protein.featureID,
+        id: protein.featureID,
+        value: protein.featureID,
+        text: splitValue(protein.featureID),
+      }));
+
+      const featureIdKey = 'featureID';
+      overlayView = (
+        <PlotsOverlay
+          onBackToTable={this.backToSplitPanesEnrichment}
+          plotOverlayData={plotOverlayData}
+          plotOverlayDataLength={plotOverlayDataLength}
+          plotOverlayLoaded={plotOverlayLoaded}
+          differentialStudy={this.props.enrichmentStudy}
+          differentialModel={this.props.enrichmentModel}
+          differentialTest={this.props.enrichmentAnnotation}
+          differentialFeature={plotOverlayData?.key || ''}
+          differentialFeatureIdKey={featureIdKey}
+          featuresString={
+            this.state.featuresStringEnrichment || plotOverlayData?.key || ''
+          }
+          differentialPlotTypes={enrichmentPlotTypes}
+          singleFeaturePlotTypes={singleFeaturePlotTypes}
+          multiFeaturePlotTypes={multiFeaturePlotTypes}
+          differentialTestIdsCommon={
+            this.state.enrichmentAnnotationIdsCommon || []
+          }
+          differentialPlotDescriptions={this.state.enrichmentPlotDescriptions}
+          differentialHighlightedFeaturesData={transformedHighlightedFeatures}
+          tab="enrichment"
+          svgTabMax={0}
+          modelSpecificMetaFeaturesExist={false}
+          BreadcrumbsComponent={EnrichmentOverlayBreadcrumbs}
+          breadcrumbsProps={{ backLabel: 'Back to Plots' }}
+          isMultiFeature={isMulti}
+        />
+      );
+    }
+
+    if (this.state.isTestSelected && !this.state.isTestDataLoaded) {
+      return (
+        <div className="SearchingAltDiv">
+          <SearchingAlt />
+        </div>
+      );
+    } else if (this.state.isSearchingEnrichment) {
+      return <TransitionActive />;
+    } else if (this.state.isTestSelected && this.state.isTestDataLoaded) {
+      return (
+        <div className="EnrichmentViewRoot">
+          {overlayView}
+          <div
+            className={
+              showOverlay
+                ? 'EnrichmentSplitPanes hidden'
+                : 'EnrichmentSplitPanes'
+            }
+            aria-hidden={showOverlay}
+            inert={showOverlay || undefined}
+          >
+            <SplitPanesContainer
+              {...this.props}
+              {...this.state}
+              onBackToTable={this.backToTable}
+              onHandleProteinSelected={this.handleProteinSelected}
+              onHandleSingleProteinSelected={
+                this.handleSingleProteinSelectedFromUI
+              }
+              onHandleSingleProteinSelectedFromMultiPlot={
+                this.handleSingleProteinSelectedFromMultiPlot
+              }
+              onHandleHighlightedLineReset={this.handleHighlightedLineReset}
+              onHandleBarcodeChanges={this.handleBarcodeChanges}
+              onGetMultifeaturePlotTransitionEnrichment={
+                this.getMultifeaturePlotTransitionEnrichment
+              }
+              onGetSingleFeaturePlotTransitionEnrichment={
+                this.getSingleFeaturePlotTransitionEnrichment
+              }
+              onGetMultifeaturePlotTransitionOverlayEnrichment={
+                this.getMultifeaturePlotTransitionOverlayEnrichment
+              }
+              // onHandleFilteredDifferentialFeatureIdKey={
+              //   this.handleFilteredDifferentialFeatureIdKey
+              // }
+              onSetFilteredDifferentialResults={(
+                filteredDifferentialResults,
+              ) => {
+                this.setState({ filteredDifferentialResults });
+              }}
+              // Multi-feature interaction handlers
+              onHandlePlotlyClickEnrichment={this.handlePlotlyClickEnrichment}
+              onRemoveSelectedFeatureEnrichment={
+                this.removeSelectedFeatureEnrichment
+              }
+              onMultiFeatureBullpenOpenChangeEnrichment={
+                this.handleMultiFeatureBullpenOpenChange
+              }
+            ></SplitPanesContainer>
+          </div>
+        </div>
+      );
+    } else if (
+      this.state.isValidSearchEnrichment &&
+      !this.state.isSearchingEnrichment
+    ) {
+      const TableAndNetworkPanes = this.getTableAndNetworkPanes();
+      return (
+        <Tab
+          className="TableAndNetworkContainer"
+          onTabChange={this.handleTableNetworkTabChange}
+          panes={TableAndNetworkPanes}
+          activeIndex={this.state.activeIndexEnrichmentView}
+          renderActiveOnly={false}
+          menu={{
+            attached: true,
+            className: 'TableAndNetworkMenuContainer',
+            // tabular: false
+            // stackable: true,
+            // secondary: true,
+            // pointing: true,
+            // color: 'orange',
+            // inverted: true,
+          }}
+        />
+      );
+    } else return <TransitionStill stillMessage={message} />;
+  };
+
+  handleItemsPerPageChange = (items) => {
+    this.setState({
+      itemsPerPageEnrichmentTable: items,
+    });
+    localStorage.setItem('itemsPerPageEnrichmentTable', items);
+  };
+
+  getTableAndNetworkPanes = () => {
+    const { tab, enrichmentStudy, enrichmentModel, enrichmentAnnotation } =
+      this.props;
+    const {
+      enrichmentResults,
+      enrichmentColumns,
+      additionalTemplateInfoEnrichmentTable,
+      itemsPerPageEnrichmentTable,
+      multisetQueriedEnrichment,
+      activeIndexEnrichmentView,
+      isEnrichmentTableLoading,
+      networkDataError,
+    } = this.state;
+    let enrichmentCacheKey = `${enrichmentStudy}-${enrichmentModel}-${enrichmentAnnotation}-${multisetQueriedEnrichment}`;
+    const enrichmentGridColumns = normalizeGridColumns(enrichmentColumns);
+    const enrichmentGridData = augmentGridRows(
+      enrichmentResults,
+      enrichmentGridColumns,
+    );
+    const TableValuePopupStyle = {
+      backgroundColor: '2E2E2E',
+      borderBottom: '2px solid var(--color-primary)',
+      color: '#FFF',
+      padding: '1em',
+      maxWidth: '50vw',
+      fontSize: '13px',
+      wordBreak: 'break-all',
+    };
+    return [
+      {
+        menuItem: (
+          <Menu.Item
+            key="0"
+            className="TableAndNetworkButtons TableButton"
+            name="table"
+            color="orange"
+            // active={this.state.activeIndexEnrichmentView === 0}
+            inverted={(activeIndexEnrichmentView === 0).toString()}
+          >
+            {/* <Icon
+              name="table"
+              size="large"
+              color="orange"
+              inverted={this.state.activeIndexEnrichmentView === 0}
+            /> */}
+            <img
+              src={
+                activeIndexEnrichmentView === 0 ? tableIconSelected : tableIcon
+              }
+              alt="Table Icon"
+              id="TableButton"
+            />
+          </Menu.Item>
+        ),
+        pane: (
+          <Tab.Pane
+            key="0"
+            className="EnrichmentContentPane"
+            id="EnrichmentContentPaneTable"
+            // ref="EnrichmentContentPaneTable"
+          >
+            <Grid>
+              <Grid.Row>
+                <div className="FloatRight AbsoluteExport">
+                  <ButtonActions
+                    exportButtonSize={'small'}
+                    excelVisible={true}
+                    pngVisible={false}
+                    pdfVisible={false}
+                    svgVisible={false}
+                    txtVisible={true}
+                    refFwd={this.EnrichmentGridRef}
+                    tab={tab}
+                    study={enrichmentStudy}
+                    model={enrichmentModel}
+                    test={enrichmentAnnotation}
+                  />
+                </div>
+                <Grid.Column
+                  className="EnrichmentTableWrapper two-col-sticky"
+                  mobile={16}
+                  tablet={16}
+                  largeScreen={16}
+                  widescreen={16}
+                >
+                  <div
+                    ref={(el) => {
+                      if (el && !this.frozenColumnWrapperRef) {
+                        this.frozenColumnWrapperRef = el;
+                        this.setupFrozenColumnResizeObserver();
+                      } else if (!el && this.frozenColumnWrapperRef) {
+                        this.frozenColumnWrapperRef = null;
+                        if (this.frozenColumnResizeObserver) {
+                          this.frozenColumnResizeObserver.disconnect();
+                          this.frozenColumnResizeObserver = null;
+                        }
+                        if (this.frozenColumnMutationObserver) {
+                          this.frozenColumnMutationObserver.disconnect();
+                          this.frozenColumnMutationObserver = null;
+                        }
+                      }
+                    }}
+                  >
+                    <EZGrid
+                      ref={this.EnrichmentGridRef}
+                      uniqueCacheKey={enrichmentCacheKey}
+                      data={enrichmentGridData}
+                      columnsConfig={enrichmentGridColumns}
+                      onExcelExport={createExcelExportHandler(
+                        `${tab}-${enrichmentStudy}-${enrichmentModel}-${enrichmentAnnotation}`,
+                      )}
+                      // totalRows={rows}
+                      // use "rows" for itemsPerPage if you want all results. For dev, keep it lower so rendering is faster
+                      itemsPerPage={itemsPerPageEnrichmentTable}
+                      onItemsPerPageChange={this.handleItemsPerPageChange}
+                      loading={isEnrichmentTableLoading}
+                      onSorted={() =>
+                        requestAnimationFrame(this.updateFrozenFirstColWidth)
+                      }
+                      // exportBaseName="Enrichment_Analysis"
+                      // columnReorder={this.props.columnReorder}
+                      //disableColumnReorder
+                      disableGrouping
+                      disableColumnVisibilityToggle
+                      min-height="75vh"
+                      additionalTemplateInfo={
+                        additionalTemplateInfoEnrichmentTable
+                      }
+                      emptyMessage={CustomEmptyMessage}
+                      disableQuickViewEditing
+                      disableQuickViewMenu
+                    />
+                  </div>
+                </Grid.Column>
+              </Grid.Row>
+            </Grid>
+          </Tab.Pane>
+        ),
+      },
+      {
+        menuItem: (
+          <Menu.Item
+            key="1"
+            className="TableAndNetworkButtons NetworkButton"
+            name="network"
+            disabled={networkDataError}
+          >
+            {!networkDataError ? (
+              <img
+                src={
+                  activeIndexEnrichmentView === 1
+                    ? networkIconSelected
+                    : networkIcon
+                }
+                alt="Network Icon"
+                id="NetworkButton"
+              />
+            ) : (
+              <Popup
+                trigger={
+                  <img
+                    src={
+                      activeIndexEnrichmentView === 1
+                        ? networkIconSelected
+                        : networkIcon
+                    }
+                    alt="Network Icon"
+                    id="NetworkButton"
+                    className={!networkDataError ? '' : 'DisabledCursor'}
+                  />
+                }
+                style={TableValuePopupStyle}
+                className="TablePopupValue"
+                content="Network Chart Not Available"
+                inverted
+                basic
+              />
+            )}
+          </Menu.Item>
+        ),
+        pane: (
+          <Tab.Pane
+            key="1"
+            className="EnrichmentContentPane"
+            id="EnrichmentContentPane"
+            // ref="EnrichmentContentPaneGraph"
+          >
+            {!networkDataError ? (
+              <NetworkGraphControls
+                {...this.props}
+                {...this.state}
+                onDisplayViolinPlot={this.displayViolinPlot}
+                onHandlePieClick={this.testSelected}
+                onHandleNodeCutoffInputChange={this.handleNodeCutoffInputChange}
+                onHandleNodeCutoffSliderChange={
+                  this.handleNodeCutoffSliderChange
+                }
+                onHandleLinkCutoffInputChange={this.handleLinkCutoffInputChange}
+                onHandleLinkCutoffSliderChange={
+                  this.handleLinkCutoffSliderChange
+                }
+                onHandleLinkTypeInputChange={this.handleLinkTypeInputChange}
+                onHandleLinkTypeSliderChange={this.handleLinkTypeSliderChange}
+                onHandleTotals={this.handleTotals}
+                onHandleLegendOpen={this.handleLegendOpen}
+                onHandleLegendClose={this.handleLegendClose}
+                onCreateLegend={this.createLegend}
+                onCancelGetEnrichmentsNetwork={
+                  this.handleCancelRequestGetEnrichmentsNetwork
+                }
+                onHandleNetworkGraphReady={this.handleNetworkGraphReady}
+              />
+            ) : (
+              <Message
+                className="NetworkGraphUnavailableMessage"
+                icon="search"
+                header="Network Graph Unavailable"
+                content="Please Revise Search"
+              />
+            )}
+          </Tab.Pane>
+        ),
+      },
+    ];
+  };
+
+  handleTotals = (filteredNodesLength, filteredLinksLength) => {
+    this.setState({
+      filteredNodesTotal: filteredNodesLength,
+      filteredLinksTotal: filteredLinksLength,
+    });
+  };
+
+  handleNodeCutoffInputChange = (value) => {
+    if (this.state.nodeCutoff !== value) {
+      this.setState({
+        nodeCutoff: value,
+      });
+      sessionStorage.setItem('nodeCutoff', value);
+    }
+  };
+
+  handleLinkCutoffInputChange = (value) => {
+    if (this.state.linkCutoff !== value) {
+      this.setState({
+        linkCutoff: value,
+      });
+      sessionStorage.setItem('linkCutoff', value);
+    }
+  };
+
+  handleLinkTypeInputChange = (value) => {
+    if (this.state.linkType !== value) {
+      this.setState({
+        linkType: value,
+      });
+      sessionStorage.setItem('linkType', value);
+    }
+  };
+
+  handleNodeCutoffSliderChange = (value) => {
+    if (this.state.nodeCutoff !== value) {
+      this.setState({ nodeCutoff: value });
+    }
+    sessionStorage.setItem('nodeCutoff', value);
+  };
+
+  handleLinkCutoffSliderChange = (value) => {
+    if (this.state.linkCutoff !== value) {
+      this.setState({ linkCutoff: value });
+    }
+    sessionStorage.setItem('linkCutoff', value);
+  };
+
+  handleLinkTypeSliderChange = (value) => {
+    if (this.state.linkType !== value) {
+      this.setState({ linkType: value });
+    }
+    sessionStorage.setItem('linkType', value);
+  };
+
+  // handleLegendOpen = () => {
+  //   // sessionStorage.setItem('legendOpen', 'true');
+  //   this.setState({ legendIsOpen: true });
+  //   // this.timeout = setTimeout(() => {
+  //   //   this.setState({ legendIsOpen: false });
+  //   // }, 2500);
+  // };
+
+  // handleLegendClose = () => {
+  //   // sessionStorage.setItem('legendOpen', 'false');
+  //   this.setState({ legendIsOpen: false });
+  //   // clearTimeout(this.timeout);
+  // };
+
+  setEnrichmentModelIds = (enrichmentModelIds) => {
+    this.setState({
+      enrichmentModelIds,
+    });
+  };
+
+  setEnrichmentResultsColumnTooltips = (response) => {
+    this.setState({
+      enrichmentResultsColumnTooltips: response,
+    });
+  };
+
+  setEnrichmentPlotDescriptions = (response) => {
+    /**
+     * @param {Object} plots - The plots object, e.g. { lineplot: { displayName: "Line plot", plotType: "singleFeature" }, ... }
+     * @returns {Array} Array of plot metadata objects: [{ plotID, plotDisplay, plotType }]
+     */
+    function convertGetPlotsTypeToListStudiesType(plots) {
+      if (!plots || typeof plots !== 'object') return [];
+      return Object.entries(plots).map(([plotID, plotObj]) => ({
+        plotID,
+        plotDisplay: plotObj.displayName,
+        plotType: plotObj.plotType,
+      }));
+    }
+    const plotsMetadata = convertGetPlotsTypeToListStudiesType(response);
+    this.setState(
+      {
+        enrichmentPlotDescriptions: response,
+        enrichmentPlotsMetadata: plotsMetadata,
+      },
+      () => {
+        this.handlePlotTypesEnrichment();
+      },
+    );
+  };
+
+  render() {
+    const enrichmentView = this.getView();
+    const {
+      multisetPlotInfoEnrichment,
+      animationEnrichment,
+      directionEnrichment,
+      visibleEnrichment,
+    } = this.state;
+    const { tab, enrichmentStudy, enrichmentModel, enrichmentAnnotation } =
+      this.props;
+
+    const pxToPtRatio = 105;
+    const pointSize = 12;
+    const width =
+      window.innerWidth ||
+      document.documentElement.clientWidth ||
+      document.body.clientWidth;
+    const height =
+      window.innerHeight ||
+      document.documentElement.clientHeight ||
+      document.body.clientHeight;
+    // const divWidth =
+    //   this.differentialViewContainerRef?.current?.parentElement?.offsetWidth ||
+    //   width - 310;
+    const divWidth = width * 0.75;
+    const divHeight = height * 0.85;
+    const divWidthPt = roundToPrecision(divWidth / pxToPtRatio, 1);
+    const divHeightPt = roundToPrecision(divHeight / pxToPtRatio, 1);
+    const divWidthPtString = `width=${divWidthPt}`;
+    const divHeightPtString = `&height=${divHeightPt}`;
+    const pointSizeString = `&pointsize=${pointSize}`;
+    const dimensions = `?${divWidthPtString}${divHeightPtString}${pointSizeString}`;
+    const srcUrl = `${multisetPlotInfoEnrichment.svg}${dimensions}`;
+    const VerticalSidebar = ({ animation, visible }) => (
+      <Sidebar
+        as={'div'}
+        animation={animation}
+        direction={directionEnrichment}
+        icon="labeled"
+        vertical="true"
+        visible={visible}
+        width="very wide"
+        className="VerticalSidebarPlot"
+      >
+        <Grid className="">
+          <Grid.Row className="ActionsRow">
+            <Grid.Column
+              mobile={16}
+              tablet={16}
+              largeScreen={16}
+              widescreen={16}
+            >
+              <ButtonActions
+                exportButtonSize={'small'}
+                excelVisible={false}
+                pngVisible={true}
+                pdfVisible={false}
+                svgVisible={true}
+                txtVisible={false}
+                plot={'enrichmentMultisetAnalysisSVG'}
+                tab={tab}
+                study={enrichmentStudy}
+                model={enrichmentModel}
+                test={enrichmentAnnotation}
+              />
+            </Grid.Column>
+          </Grid.Row>
+        </Grid>
+        <div className="MultisetSvgOuter" id="enrichmentMultisetAnalysisSVGDiv">
+          {multisetPlotInfoEnrichment.svg ? (
+            <SVG
+              cacheRequests={true}
+              src={srcUrl}
+              uniqueHash="d4i1g4"
+              uniquifyIDs={true}
+              id="enrichmentMultisetAnalysisSVG"
+            />
+          ) : (
+            <div className="PlotInstructions">
+              <h4 className="PlotInstructionsText NoSelect">
+                {multisetPlotInfoEnrichment.title} is not available for this
+                combination of features
+              </h4>
+            </div>
+          )}
+        </div>
+      </Sidebar>
+    );
+
+    return (
+      <Grid>
+        <Grid.Row className="EnrichmentContainer">
+          <Grid.Column
+            className="SidebarContainer"
+            style={
+              this.state.enrichmentSidebarMaxHeight
+                ? { maxHeight: this.state.enrichmentSidebarMaxHeight }
+                : undefined
+            }
+            mobile={4}
+            tablet={4}
+            largeScreen={4}
+            widescreen={4}
+          >
+            <EnrichmentSearch
+              {...this.state}
+              {...this.props}
+              onSearchTransitionEnrichment={
+                this.handleSearchTransitionEnrichment
+              }
+              onEnrichmentSearch={this.handleEnrichmentSearch}
+              onColumnReorder={this.handleColumnReorder}
+              onSearchChangeEnrichment={this.handleSearchChangeEnrichment}
+              onSearchResetEnrichment={this.handleSearchResetEnrichment}
+              onDisablePlotEnrichment={this.disablePlotEnrichment}
+              onGetMultisetPlotEnrichment={this.handleMultisetPlot}
+              onMultisetQueriedEnrichment={this.handleMultisetQueriedEnrichment}
+              onHandlePlotAnimationEnrichment={
+                this.handlePlotAnimationEnrichment
+              }
+              onHandlePlotTypesEnrichment={this.handlePlotTypesEnrichment}
+              onHandleNetworkSigValue={this.handleNetworkSigValue}
+              onHandleNetworkOperator={this.handleNetworkOperator}
+              onHandleNetworkTests={this.handleNetworkTests}
+              onMultisetTestsFiltered={this.handleMultisetTestsFiltered}
+              onAnnotationChange={this.handleAnnotationChange}
+              onSetHasAnnotationTerms={this.setHasAnnotationTerms}
+              onHandleNetworkGraphReady={this.handleNetworkGraphReady}
+              onHandleEnrichmentTableLoading={this.handleEnrichmentTableLoading}
+              onGetEnrichmentsLinkouts={this.getEnrichmentsLinkouts}
+              onHandleIsDataStreamingEnrichmentsTable={
+                this.handleIsDataStreamingEnrichmentsTable
+              }
+              onHandlePValueTypeChange={this.handlePValueTypeChange}
+              onHandleEnrichmentColumnsConfigured={
+                this.handleEnrichmentColumnsConfigured
+              }
+              onSetEnrichmentModelIds={this.setEnrichmentModelIds}
+              onSetEnrichmentResultsColumnTooltips={
+                this.setEnrichmentResultsColumnTooltips
+              }
+              onSetEnrichmentPlotDescriptions={
+                this.setEnrichmentPlotDescriptions
+              }
+            />
+          </Grid.Column>
+          <Grid.Column
+            className="EnrichmentContentContainer"
+            mobile={12}
+            tablet={12}
+            largeScreen={12}
+            widescreen={12}
+          >
+            <Sidebar.Pushable as={'span'}>
+              <VerticalSidebar
+                animation={animationEnrichment}
+                direction={directionEnrichment}
+                visible={visibleEnrichment}
+              />
+              <Sidebar.Pusher>
+                <ErrorBoundary>
+                  <div
+                    className="EnrichmentViewContainer"
+                    ref={this.EnrichmentViewContainerRef}
+                  >
+                    {enrichmentView}
+                  </div>
+                </ErrorBoundary>
+              </Sidebar.Pusher>
+            </Sidebar.Pushable>
+          </Grid.Column>
+        </Grid.Row>
+      </Grid>
+    );
+  }
+}
+
+export default withRouter(Enrichment);
+
+function getDataItemDescription(value) {
+  if (value) {
+    // const dataItem = value.split(':')[1];
+    // we need everything after the first : (e.g. Home sapiens: Apotosis)
+    const dataItem = value.substr(value.indexOf(':') + 1);
+    return dataItem;
+  }
+}
+
+function getTestName(value) {
+  if (value) {
+    const test = value.split(':')[0];
+    return test;
+  }
+}

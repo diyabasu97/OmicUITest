@@ -1,0 +1,424 @@
+// #LabelTextCheckbox,
+// .LabelTextCol {
+//   float: right !important;
+// }
+.SplitPanesWrapper {
+  width: 100% !important;
+  min-height: 90vh !important;
+  height: 90vh !important;
+  overflow: hidden !important;
+  padding-left: 20px !important;
+  box-sizing: border-box !important;
+
+  * {
+    box-sizing: border-box;
+  }
+
+  .Pane {
+    min-width: 0 !important;
+    min-height: 0 !important;
+  }
+
+  .Resizer {
+    background: #000;
+    opacity: 0.2;
+    z-index: 10;
+    -moz-box-sizing: border-box;
+    -webkit-box-sizing: border-box;
+    box-sizing: border-box;
+    -moz-background-clip: padding;
+    -webkit-background-clip: padding;
+    background-clip: padding-box;
+  }
+
+  .Resizer:hover {
+    -webkit-transition: all 0.3s ease;
+    transition: all 0.3s ease;
+  }
+
+  .Resizer.horizontal {
+    padding: 1px 0px !important;
+    height: 16px;
+    margin: -8px 0;
+    border-top: 8px solid rgba(255, 255, 255, 0);
+    border-bottom: 8px solid rgba(255, 255, 255, 0);
+    cursor: row-resize;
+    width: 100%;
+    z-index: 10 !important;
+  }
+
+  .Resizer.horizontal:hover {
+    border-top: 8px solid var(--color-primary);
+    border-bottom: 8px solid var(--color-primary);
+  }
+
+  .Resizer.vertical {
+    padding: 0px 1px !important;
+    width: 16px;
+    margin: 0 -8px;
+    border-left: 8px solid rgba(255, 255, 255, 0);
+    border-right: 8px solid rgba(255, 255, 255, 0);
+    cursor: col-resize;
+  }
+
+  .Resizer.vertical:hover {
+    border-left: 8px solid var(--color-primary);
+    border-right: 8px solid var(--color-primary);
+  }
+  .Resizer.disabled {
+    cursor: not-allowed;
+  }
+  .Resizer.disabled:hover {
+    border-color: transparent;
+  }
+
+  .PlotsWrapper {
+    padding-top: 12px !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+
+  #SVGSplitContainer {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    min-width: 0;
+    min-height: 0;
+    .ShowBlock:not(.export-svg) {
+      margin-right: 30px;
+    }
+  }
+
+  .PlotInstructionsText {
+    text-align: center !important;
+    margin: 0;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  .ViolinPlotDiv {
+    padding-top: 0px;
+    height: 100% !important;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    // padding-top: 40px !important;
+  }
+
+  .ViolinPlotTab {
+    height: 100% !important;
+    min-width: 0;
+    min-height: 0;
+    margin-top: 0px !important;
+    border: none !important;
+    padding: 0px !important;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #ViolinPlotTab {
+    overflow: hidden !important;
+  }
+
+  #ViolinPlotTab .violin-chart-wrapper {
+    min-height: 0 !important;
+  }
+
+  .TableResultsTab {
+    // min-height: 400px !important;
+    padding-left: 0px !important;
+    padding-top: 0px !important;
+    margin-top: 0px !important;
+    border: none !important;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: auto; /* allow scroll only for table */
+    display: flex;
+    flex-direction: column;
+  }
+
+  .ViolinAndTableTabsDiv {
+    height: 100% !important;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Make Semantic-UI Tab fill remaining height under the menu */
+  .ViolinAndTableTabsDiv > .ViolinAndTableMenu {
+    flex: 0 0 auto;
+  }
+
+  .ViolinAndTableTabsDiv > .ui.bottom.attached.segment {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden; /* default; table tab overrides */
+    display: flex;
+    flex-direction: column;
+    padding: 0px !important;
+    border: none !important;
+  }
+
+  .ViolinAndTableMenu {
+    direction: ltr !important;
+    // position: absolute !important;
+    z-index: 3 !important;
+    left: 0 !important;
+    // margin-left: 25px !important;
+    // width: 90% !important;
+    background: white !important;
+    // border-bottom: none !important;
+    min-height: 40px !important;
+    height: 40px !important;
+    display: flex !important;
+    align-items: center !important;
+    padding-right: 120px !important; /* reserve space for export */
+    overflow: visible !important;
+
+    .item {
+      height: 40px !important;
+      display: flex !important;
+      align-items: center !important;
+      line-height: normal !important;
+    }
+  }
+
+  // .BottomSplitPaneContainer,
+  #ViolinAndTableSplitContainer {
+    height: 100% !important;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden !important; /* scrolling is handled per active tab */
+  }
+
+  #TableResultsTab {
+    overflow: auto !important;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  #TableResultsTab .QHGrid {
+    margin-top: 0px !important;
+    input {
+      border: 1px solid lightgrey !important;
+    }
+  }
+
+  #TableResultsTab .QHGridHeaderDiv {
+    min-height: 275px !important;
+    height: 100% !important;
+  }
+
+  #BarcodeChartContainer {
+    width: 100% !important;
+    .ExportButtonGroup {
+      padding-bottom: 10px;
+    }
+  }
+
+  #BarcodeChart {
+    width: 100% !important;
+  }
+
+  .export-violin {
+    margin: 4px 25px 2px 0px;
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 6; /* keep above tab menu during resize/drag */
+  }
+
+  @media (min-width: 1599px) {
+    .export-violin {
+      margin: 4px 26px 2px 0px !important;
+    }
+  }
+
+  .main {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    position: relative; /* anchor .export-violin */
+    overflow: hidden; /* plot tab must not create internal scrollbars */
+  }
+
+  #EnrichmentPlotSVGDiv {
+    // max-height: 55vh !important;
+    // height: 55vh !important;
+    padding-right: 45px !important;
+    svg {
+      height: 100% !important;
+      width: inherit !important;
+    }
+  }
+}
+
+.PlotTabsContainer {
+  margin-bottom: 0px !important;
+  margin-top: 0px !important;
+  height: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+  overflow: visible !important;
+
+  .item {
+    height: 40px !important;
+    display: flex !important;
+    align-items: center !important;
+    line-height: normal !important;
+  }
+
+  a.active:last-child {
+    border-color: var(--color-primary) !important;
+  }
+
+  a.active:first-child {
+    border-color: var(--color-link) !important;
+  }
+}
+
+.EnrichmentPlots {
+  /* Match Differential layout: Tab content must fill the right split-pane height */
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+
+  .EnrichmentPlotsBounded {
+    position: relative; /* anchor .PlotTabsExportHost exactly like Differential */
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .EnrichmentPlotsBounded .PlotTabsExportHost {
+    flex-shrink: 0;
+  }
+
+  /* Semantic UI tab segment must participate in the height chain */
+  .ui.bottom.attached.tab.segment {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 0 !important; /* avoid extra segment padding causing subtle overflow */
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Center initial-load loader / instructions reliably (no absolute positioning dependency) */
+  .PlotInstructions {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .PlotInstructionsText {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    transform: none !important;
+  }
+  /* Single-feature Tab.Pane in the top-right split pane (reuses Differential PlotsSingleFeature) */
+  .SingleFeaturePlotPane {
+    /* critical for SplitPane children: allow flex items to shrink */
+    min-height: 0;
+    height: 100%;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    position: relative; /* anchor export/fullscreen absolute buttons */
+    overflow: visible; /* prevent SVG spilling outside pane */
+  }
+
+  .SingleFeaturePlotPane .differentialDetailSvgContainer {
+    height: 100%;
+    width: 100%;
+    margin: 0px 15px 0px 15px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    min-height: 0;
+  }
+
+  .SingleFeaturePlotPane .SVGPlot {
+    flex: 1 1 auto;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  .SingleFeaturePlotPane .export-svg {
+    margin: 5px 20px 5px 0px !important;
+    position: absolute;
+    right: 0;
+    top: 0;
+  }
+
+  /* Multi-feature Tab.Pane in the bottom-right split pane */
+  .MultiFeaturePlotPane {
+    min-height: 0; /* critical for split panes */
+    height: 100%; /* fill bottom-right area */
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: visible; /* never clip Plotly or export bar */
+  }
+
+  .MultiFeaturePlotPane .differentialDetailSvgContainer {
+    height: 100%;
+    width: 100%;
+    margin: 0px 15px 0px 15px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  /* The Plotly/SVG area inside multi-feature */
+  .MultiFeaturePlotPane .SVGPlot {
+    flex: 1 1 auto;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  .MultiFeaturePlotPane .export-svg {
+    margin: 5px 20px 5px 0px !important;
+    position: absolute;
+    right: 0;
+    top: 0;
+  }
+}
+
+/* Enrichment-only override: avoid extra bottom gap/line and allow SplitPane to shrink */
+.EnrichmentPlots .SingleFeaturePlotPane,
+.EnrichmentPlots .MultiFeaturePlotPane {
+  padding-bottom: 0px !important;
+  min-height: 0px !important;
+}

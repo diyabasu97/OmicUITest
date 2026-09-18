@@ -1,0 +1,874 @@
+import React, { Component } from 'react';
+import { withRouter } from 'react-router-dom';
+import { Grid, Dimmer, Loader, Tab } from 'semantic-ui-react';
+import EnrichmentBreadcrumbs from './EnrichmentBreadcrumbs';
+import ButtonActions from '../Shared/ButtonActions';
+import SplitPane from 'react-split-pane-r17';
+import './SplitPanesContainer.scss';
+import BarcodePlot from './BarcodePlot';
+import ViolinPlot from './ViolinPlot';
+import FilteredDifferentialTable from './FilteredDifferentialTable';
+import PlotsMultiFeature from '../Differential/PlotsMultiFeature';
+import PlotsSingleFeature from '../Differential/PlotsSingleFeature';
+
+const ENRICHMENT_SPLIT_DEFAULTS = { horizontal: 250, vertical: 465 };
+// Toggle persistence of Enrichment split sizes. When false, reload returns to defaults.
+const PERSIST_ENRICHMENT_SPLIT_SIZES = true;
+
+const getInitialEnrichmentSplitSize = (
+  enrichmentKey,
+  legacyKey,
+  defaultValue,
+) => {
+  if (!PERSIST_ENRICHMENT_SPLIT_SIZES) return defaultValue;
+  try {
+    const v = parseInt(localStorage.getItem(enrichmentKey), 10);
+    if (!Number.isNaN(v) && v) return v;
+    const legacy = parseInt(localStorage.getItem(legacyKey), 10);
+    if (!Number.isNaN(legacy) && legacy) return legacy;
+  } catch (e) {
+    // ignore
+  }
+  return defaultValue;
+};
+
+class SplitPanesContainer extends Component {
+  // Smooth redraw during SplitPane drag without spamming localStorage
+  _pendingDragSizes = { horizontal: null, vertical: null };
+  _dragRafId = null;
+
+  // Container-driven sizing for the bottom-right split pane (feature plots)
+  svgSplitContainerRef = React.createRef();
+  _svgSplitResizeObserver = null;
+  _onWindowResize = null;
+
+  // Global safety handler: ensures drag state resets if onDragFinished does not fire
+  _onGlobalPointerUp = null;
+
+  state = {
+    activeSvgTabIndexEnrichment: 0,
+
+    // Live sizes: update continuously during drag (keeps SplitPane divider responsive)
+    horizontalSplitPaneSize: getInitialEnrichmentSplitSize(
+      'enrichmentHorizontalSplitPaneSize',
+      'horizontalSplitPaneSize',
+      ENRICHMENT_SPLIT_DEFAULTS.horizontal,
+    ),
+    verticalSplitPaneSize: getInitialEnrichmentSplitSize(
+      'enrichmentVerticalSplitPaneSize',
+      'verticalSplitPaneSize',
+      ENRICHMENT_SPLIT_DEFAULTS.vertical,
+    ),
+
+    // Committed sizes: update only on drag end (used to size heavy plots)
+    horizontalSplitPaneSizeCommitted: getInitialEnrichmentSplitSize(
+      'enrichmentHorizontalSplitPaneSize',
+      'horizontalSplitPaneSize',
+      ENRICHMENT_SPLIT_DEFAULTS.horizontal,
+    ),
+    verticalSplitPaneSizeCommitted: getInitialEnrichmentSplitSize(
+      'enrichmentVerticalSplitPaneSize',
+      'verticalSplitPaneSize',
+      ENRICHMENT_SPLIT_DEFAULTS.vertical,
+    ),
+
+    // True while the user is actively dragging a SplitPane divider
+    isSplitPaneDragging: false,
+
+    activeViolinTableIndex: 0,
+    elementTextKey: 'featureID',
+    featurePlotsExportPortalNode: null,
+
+    // Measured size of the bottom-right split pane container (#SVGSplitContainer)
+    svgSplitPaneWidth: null,
+    svgSplitPaneHeight: null,
+  };
+  filteredDifferentialGridRef = React.createRef();
+
+  componentDidMount() {
+    // Ensure Enrichment always starts from defaults when persistence is disabled
+    if (!PERSIST_ENRICHMENT_SPLIT_SIZES) {
+      try {
+        localStorage.removeItem('enrichmentHorizontalSplitPaneSize');
+        localStorage.removeItem('enrichmentVerticalSplitPaneSize');
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // Safety: reset drag flag if pointer/touch ends outside SplitPane (onDragFinished may not fire)
+    this._onGlobalPointerUp = () => {
+      if (!this.state.isSplitPaneDragging) return;
+
+      if (this._dragRafId) {
+        cancelAnimationFrame(this._dragRafId);
+        this._dragRafId = null;
+      }
+      this._pendingDragSizes = { horizontal: null, vertical: null };
+
+      this.setState({ isSplitPaneDragging: false });
+    };
+
+    window.addEventListener('mouseup', this._onGlobalPointerUp);
+    window.addEventListener('touchend', this._onGlobalPointerUp);
+    window.addEventListener('pointerup', this._onGlobalPointerUp);
+    window.addEventListener('blur', this._onGlobalPointerUp);
+
+    // Measure the real bottom-right container size so plots never overflow.
+    this._setupSvgSplitPaneResizeObserver();
+  }
+
+  _setupSvgSplitPaneResizeObserver = () => {
+    const node = this.svgSplitContainerRef?.current;
+    if (!node) return;
+
+    // Commit measured size for the bottom-right feature-plot container.
+    this._resizeRafId = null;
+
+    const commitSize = () => {
+      if (this.state.isSplitPaneDragging) return;
+
+      const nextWidth = Math.max(0, Math.round(node.clientWidth || 0));
+      const nextHeight = Math.max(0, Math.round(node.clientHeight || 0));
+
+      if (
+        nextWidth !== this.state.svgSplitPaneWidth ||
+        nextHeight !== this.state.svgSplitPaneHeight
+      ) {
+        this.setState({
+          svgSplitPaneWidth: nextWidth,
+          svgSplitPaneHeight: nextHeight,
+        });
+      }
+    };
+
+    const throttledCommitSize = () => {
+      if (this._resizeRafId) return;
+      this._resizeRafId = requestAnimationFrame(() => {
+        this._resizeRafId = null;
+        commitSize();
+      });
+    };
+
+    // Initial measure (safe even before first drag)
+    commitSize();
+
+    // ResizeObserver covers SplitPane drags + responsive layout changes.
+    if (typeof ResizeObserver !== 'undefined') {
+      try {
+        this._svgSplitResizeObserver = new ResizeObserver(() =>
+          throttledCommitSize(),
+        );
+        this._svgSplitResizeObserver.observe(node);
+      } catch (e) {
+        // ignore and fall back
+      }
+    }
+
+    // Fallback: keep updated on window resize too
+    this._onWindowResize = () => throttledCommitSize();
+    window.addEventListener('resize', this._onWindowResize);
+  };
+
+  componentDidUpdate(prevProps, prevState) {
+    const prevCount = prevProps.HighlightedProteins
+      ? prevProps.HighlightedProteins.length
+      : 0;
+    const currCount = this.props.HighlightedProteins
+      ? this.props.HighlightedProteins.length
+      : 0;
+
+    const { activeSvgTabIndexEnrichment } = this.state;
+    const hasMultiFeature = this.props.plotMultiFeatureAvailable;
+
+    const prevSelected = prevProps.selectedProteinId;
+    const currSelected = this.props.selectedProteinId;
+
+    const canChangeTabs = this.props.enableSvgTabChangeOnSelection !== false;
+    const selectedProteinChanged =
+      !!currSelected && currSelected !== prevSelected;
+    const highlightedCountBecameMulti =
+      currCount >= 2 && currCount !== prevCount && hasMultiFeature;
+    const highlightedCountDroppedFromMulti =
+      activeSvgTabIndexEnrichment === 1 && currCount < 2 && prevCount >= 2;
+
+    if (
+      canChangeTabs &&
+      selectedProteinChanged &&
+      activeSvgTabIndexEnrichment !== 0
+    ) {
+      this.handleSVGTabChange(0);
+    } else if (canChangeTabs && highlightedCountBecameMulti) {
+      this.handleSVGTabChange(1);
+    } else if (canChangeTabs && highlightedCountDroppedFromMulti) {
+      this.handleSVGTabChange(0);
+    }
+  }
+
+  componentWillUnmount() {
+    if (this._onGlobalPointerUp) {
+      window.removeEventListener('mouseup', this._onGlobalPointerUp);
+      window.removeEventListener('touchend', this._onGlobalPointerUp);
+      window.removeEventListener('pointerup', this._onGlobalPointerUp);
+      window.removeEventListener('blur', this._onGlobalPointerUp);
+      this._onGlobalPointerUp = null;
+    }
+
+    if (this._dragRafId) {
+      cancelAnimationFrame(this._dragRafId);
+      this._dragRafId = null;
+    }
+
+    if (this._resizeRafId) {
+      cancelAnimationFrame(this._resizeRafId);
+      this._resizeRafId = null;
+    }
+
+    if (this._svgSplitResizeObserver) {
+      try {
+        this._svgSplitResizeObserver.disconnect();
+      } catch (e) {
+        // ignore
+      }
+      this._svgSplitResizeObserver = null;
+    }
+
+    if (this._onWindowResize) {
+      window.removeEventListener('resize', this._onWindowResize);
+      this._onWindowResize = null;
+    }
+
+    this._pendingDragSizes = { horizontal: null, vertical: null };
+  }
+
+  handleSVGTabChange = (activeTabIndex) => {
+    this.setState({
+      activeSvgTabIndexEnrichment: activeTabIndex,
+    });
+  };
+
+  setFeaturePlotsExportPortalNode = (node) => {
+    if (node && node !== this.state.featurePlotsExportPortalNode) {
+      this.setState({ featurePlotsExportPortalNode: node });
+    }
+  };
+
+  getBarcodePlot = () => {
+    const { isTestDataLoaded } = this.props;
+    if (!isTestDataLoaded) {
+      return (
+        <div>
+          <Dimmer active inverted>
+            <Loader size="large">Loading Plot</Loader>
+          </Dimmer>
+        </div>
+      );
+    } else {
+      return (
+        <BarcodePlot
+          className="BarcodePlotContainer"
+          {...this.state}
+          {...this.props}
+        />
+      );
+    }
+  };
+
+  getViolinPlot() {
+    const { isViolinPlotLoaded } = this.props;
+    if (!isViolinPlotLoaded) {
+      return (
+        <div className="PlotInstructions">
+          <h4 className="PlotInstructionsText">
+            Select barcode line/s to display Violin Plot
+          </h4>
+        </div>
+      );
+    } else {
+      return (
+        <ViolinPlot
+          className="ViolinPlotContainer"
+          {...this.state}
+          {...this.props}
+        />
+      );
+    }
+  }
+
+  handleViolinTableTabChange = (e, { activeIndex }) => {
+    this.setState({
+      activeViolinTableIndex: activeIndex,
+    });
+  };
+
+  getButtonActionsClass = () => {
+    if (
+      this.props.enrichmentModel === 'Timecourse Differential Phosphorylation'
+    ) {
+      return 'export-violin Hide';
+    } else {
+      return 'export-violin ShowBlock';
+    }
+  };
+
+  getViolinAndTable = () => {
+    const {
+      displayViolinPlot,
+      enrichmentStudy,
+      enrichmentModel,
+      plotDataEnrichment,
+    } = this.props;
+    const { activeViolinTableIndex } = this.state;
+    const violinPlot = this.getViolinPlot();
+    const violinAndTablePanes = [
+      {
+        menuItem: 'Box Plot',
+        pane: (
+          <Tab.Pane
+            attached
+            key="0"
+            id="ViolinPlotTab"
+            className="ViolinPlotTab"
+          >
+            <div id="" className="ViolinPlotDiv">
+              {violinPlot}
+            </div>
+          </Tab.Pane>
+        ),
+      },
+      {
+        menuItem: 'Statistic Table',
+        pane: (
+          <Tab.Pane
+            attached
+            key="1"
+            id="TableResultsTab"
+            className="TableResultsTab two-col-sticky"
+          >
+            <FilteredDifferentialTable
+              {...this.state}
+              {...this.props}
+              filteredDifferentialGridRef={this.filteredDifferentialGridRef}
+            />
+          </Tab.Pane>
+        ),
+      },
+    ];
+
+    const onlyTablePane = [
+      {
+        menuItem: 'Statistic Table',
+        pane: (
+          <Tab.Pane
+            attached
+            key="1"
+            id="TableResultsTab"
+            className="TableResultsTab"
+          >
+            <FilteredDifferentialTable {...this.state} {...this.props} />
+          </Tab.Pane>
+        ),
+      },
+    ];
+
+    const testVar =
+      plotDataEnrichment.key !== '' && plotDataEnrichment.key != null
+        ? plotDataEnrichment.key.split(':')[0]
+        : '';
+    const selectedPlot = violinAndTablePanes[activeViolinTableIndex].menuItem;
+    const ButtonActionsClass = this.getButtonActionsClass();
+    const actionButtons =
+      selectedPlot === 'Statistic Table' ? (
+        <ButtonActions
+          exportButtonSize={'mini'}
+          excelVisible={true}
+          pngVisible={false}
+          pdfVisible={false}
+          svgVisible={false}
+          txtVisible={true}
+          refFwd={this.filteredDifferentialGridRef}
+          tab={'differential'}
+          study={enrichmentStudy}
+          model={enrichmentModel}
+          test={testVar}
+        />
+      ) : (
+        <ButtonActions
+          exportButtonSize={'mini'}
+          excelVisible={false}
+          pngVisible={true}
+          pdfVisible={false}
+          svgVisible={true}
+          txtVisible={false}
+          plot={this.props.violinSettings.id}
+          description={plotDataEnrichment.key}
+        />
+      );
+    return (
+      <div className="main">
+        <div className={ButtonActionsClass}>{actionButtons}</div>
+        <Tab
+          className="ViolinAndTableTabsDiv"
+          onTabChange={this.handleViolinTableTabChange}
+          panes={displayViolinPlot ? violinAndTablePanes : onlyTablePane}
+          activeIndex={activeViolinTableIndex}
+          renderActiveOnly={false}
+          menu={{
+            stackable: true,
+            secondary: true,
+            pointing: true,
+            className: 'ViolinAndTableMenu',
+          }}
+        />
+      </div>
+    );
+  };
+
+  // Called while dragging (SplitPane onChange). Updates *live* sizes at most once per animation frame.
+  splitPaneDragging = (size, paneType) => {
+    if (size === undefined) return;
+    this._pendingDragSizes[paneType] = size;
+    if (this._dragRafId) return;
+
+    this._dragRafId = requestAnimationFrame(() => {
+      const next = {};
+
+      if (this._pendingDragSizes.horizontal !== null) {
+        next.horizontalSplitPaneSize = this._pendingDragSizes.horizontal;
+        this._pendingDragSizes.horizontal = null;
+      }
+      if (this._pendingDragSizes.vertical !== null) {
+        next.verticalSplitPaneSize = this._pendingDragSizes.vertical;
+        this._pendingDragSizes.vertical = null;
+      }
+
+      if (!this.state.isSplitPaneDragging) {
+        next.isSplitPaneDragging = true;
+      }
+
+      this._dragRafId = null;
+      if (Object.keys(next).length) {
+        this.setState(next);
+      }
+    });
+  };
+
+  splitPaneResized = (size, paneType) => {
+    if (size === undefined) return;
+
+    // Ensure no pending RAF updates run after drag completes
+    if (this._dragRafId) {
+      cancelAnimationFrame(this._dragRafId);
+      this._dragRafId = null;
+    }
+
+    if (this._resizeRafId) {
+      cancelAnimationFrame(this._resizeRafId);
+      this._resizeRafId = null;
+    }
+    this._pendingDragSizes = { horizontal: null, vertical: null };
+
+    if (paneType === 'horizontal') {
+      this.setState({
+        horizontalSplitPaneSize: size,
+        horizontalSplitPaneSizeCommitted: size,
+        isSplitPaneDragging: false,
+      });
+    } else {
+      this.setState({
+        verticalSplitPaneSize: size,
+        verticalSplitPaneSizeCommitted: size,
+        isSplitPaneDragging: false,
+      });
+
+      // After drag ends, commit the real DOM size for the feature-plot container once.
+      // This keeps Violin/Table live-resizing (driven by SplitPane sizes) while
+      // feature plots (Plotly/SVG) only re-layout on drag end.
+      requestAnimationFrame(() => {
+        const node = this.svgSplitContainerRef?.current;
+        if (!node) return;
+        const nextWidth = Math.max(0, Math.round(node.clientWidth || 0));
+        const nextHeight = Math.max(0, Math.round(node.clientHeight || 0));
+
+        if (
+          nextWidth !== this.state.svgSplitPaneWidth ||
+          nextHeight !== this.state.svgSplitPaneHeight
+        ) {
+          this.setState({
+            svgSplitPaneWidth: nextWidth,
+            svgSplitPaneHeight: nextHeight,
+          });
+        }
+      });
+    }
+
+    if (PERSIST_ENRICHMENT_SPLIT_SIZES) {
+      const key =
+        paneType === 'horizontal'
+          ? 'enrichmentHorizontalSplitPaneSize'
+          : 'enrichmentVerticalSplitPaneSize';
+      try {
+        localStorage.setItem(key, String(size));
+      } catch (e) {
+        // ignore
+      }
+    }
+  };
+
+  renderFeaturePlotTabs = (
+    width,
+    height,
+    verticalSplitPaneSize,
+    horizontalSplitPaneSize,
+    enrichmentStudy,
+    enrichmentModel,
+    enrichmentPlotDescriptions,
+  ) => {
+    const {
+      plotMultiFeatureAvailable,
+      HighlightedProteins,
+      enrichmentPlotTypes,
+      enrichmentAnnotation,
+      enrichmentAnnotationIdsCommon,
+      enrichmentMultiFeaturePlotTypes,
+      plotMultiFeatureData,
+      plotMultiFeatureDataLoaded,
+      plotMultiFeatureDataLength,
+      plotMultiFeatureMax,
+      svgExportName,
+      tab,
+      onHandleProteinSelected,
+      SVGPlotLoaded,
+      SVGPlotLoading,
+      plotDataEnrichment,
+      plotDataEnrichmentLength,
+      // Data for feature labels in gear popup
+      barcodeSettings,
+      filteredDifferentialResults,
+      filteredDifferentialFeatureIdKey,
+    } = this.props;
+
+    const { activeSvgTabIndexEnrichment } = this.state;
+
+    // Container-driven sizing (matches Differential behavior) to eliminate overflow and magic numbers.
+    // Fallback to previous window-based math if the container hasn't been measured yet.
+    const { svgSplitPaneWidth, svgSplitPaneHeight } = this.state;
+
+    const TAB_MENU_HEIGHT = 40; // .PlotTabsContainer in SCSS
+    const PLOT_HORIZONTAL_MARGINS = 30; // .differentialDetailSvgContainer margin: 0 15px
+    const PLOTS_WRAPPER_PADDING = 20; // .PlotsWrapper padding: 10px left + 10px right (applied to parent of SVGSplitContainer)
+
+    const fallbackPaneWidth = width - verticalSplitPaneSize - 300;
+    const fallbackPaneHeight = height - (horizontalSplitPaneSize || 0) - 55;
+
+    // When using measured width, account for .PlotsWrapper padding that constrains the measured container
+    const measuredPaneWidth =
+      typeof svgSplitPaneWidth === 'number' && svgSplitPaneWidth > 0
+        ? svgSplitPaneWidth - PLOTS_WRAPPER_PADDING
+        : null;
+
+    const paneWidth =
+      measuredPaneWidth !== null && measuredPaneWidth > 0
+        ? measuredPaneWidth
+        : fallbackPaneWidth;
+    const paneHeight =
+      typeof svgSplitPaneHeight === 'number' && svgSplitPaneHeight > 0
+        ? svgSplitPaneHeight
+        : fallbackPaneHeight;
+
+    const contentWidth = Math.max(0, paneWidth - PLOT_HORIZONTAL_MARGINS);
+    const contentHeight = Math.max(0, paneHeight - TAB_MENU_HEIGHT);
+
+    const multiContentWidth = contentWidth;
+    const multiContentHeight = contentHeight;
+
+    const boundedStyle =
+      measuredPaneWidth !== null && measuredPaneWidth > 0
+        ? { width: '100%', maxWidth: `${paneWidth}px` }
+        : { width: '100%', maxWidth: '100%' };
+
+    // 1. Determine the feature ID key based on data source
+    const featureIdKey = 'featureID';
+
+    // 2. Get the table data for label lookups
+    const tableData = barcodeSettings?.barcodeData || [];
+    // 3. Transform HighlightedProteins to have .key/.id/.value properties
+    //    PlotsMultiFeature expects: { key, id, value } for getFeaturesList()
+    //    Enrichment has: { featureID, sample, cpm }
+    // Single-feature plot types (exclude multiFeature plot types)
+    const singleFeaturePlotTypes = (enrichmentPlotTypes || []).filter(
+      (p) => !p.plotType?.includes('multiFeature'),
+    );
+
+    const transformedHighlightedFeatures = (HighlightedProteins || []).map(
+      (protein) => ({
+        ...protein,
+        key: protein.featureID || protein.key || protein.id,
+        id: protein.featureID || protein.key || protein.id,
+        value: protein.featureID || protein.key || protein.id,
+      }),
+    );
+
+    return (
+      <div className="EnrichmentPlots">
+        <div className="EnrichmentPlotsBounded" style={boundedStyle}>
+          <div
+            className="PlotTabsExportHost"
+            ref={this.setFeaturePlotsExportPortalNode}
+          />
+          <Tab
+            className="EnrichmentRightTabs"
+            style={{
+              flex: '1 1 auto',
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+            menu={{
+              secondary: true,
+              pointing: true,
+              className: 'PlotTabsContainer',
+            }}
+            renderActiveOnly={false}
+            activeIndex={activeSvgTabIndexEnrichment}
+            onTabChange={(e, data) => {
+              const nextIndex = data.activeIndex;
+              this.handleSVGTabChange(nextIndex);
+            }}
+            panes={[
+              {
+                menuItem: 'Single-Feature Plots',
+                pane: (
+                  <Tab.Pane
+                    key="single-feature-plots-pane"
+                    attached={false}
+                    className="SingleFeaturePlotPane"
+                  >
+                    <PlotsSingleFeature
+                      plotSingleFeatureData={plotDataEnrichment}
+                      plotSingleFeatureDataLength={plotDataEnrichmentLength}
+                      plotSingleFeatureDataLoaded={SVGPlotLoaded}
+                      isLoading={SVGPlotLoading}
+                      // unified dimensions for single-feature
+                      divWidth={multiContentWidth}
+                      divHeight={multiContentHeight}
+                      pxToPtRatio={105}
+                      pointSize={12}
+                      svgTabMax={1}
+                      tab={tab}
+                      upperPlotsVisible={true}
+                      svgExportName={svgExportName}
+                      exportInTabHeader={true}
+                      exportPortalNode={this.state.featurePlotsExportPortalNode}
+                      exportPortalActive={activeSvgTabIndexEnrichment === 0}
+                      differentialStudy={enrichmentStudy}
+                      differentialModel={enrichmentModel}
+                      differentialTest={enrichmentAnnotation}
+                      differentialTestIdsCommon={
+                        enrichmentAnnotationIdsCommon || []
+                      }
+                      differentialPlotTypes={enrichmentPlotTypes}
+                      singleFeaturePlotTypes={singleFeaturePlotTypes}
+                      differentialPlotDescriptions={enrichmentPlotDescriptions}
+                      modelSpecificMetaFeaturesExist={false}
+                      onGetPlotTransitionRef={
+                        this.props.onGetSingleFeaturePlotTransitionEnrichment
+                      }
+                      showFullScreenButton={
+                        !!this.props.onGetSingleFeaturePlotTransitionEnrichment
+                      }
+                    />
+                  </Tab.Pane>
+                ),
+              },
+              {
+                menuItem: 'Multi-Feature Plots',
+                disabled: !plotMultiFeatureAvailable,
+                pane: (
+                  <Tab.Pane
+                    attached={false}
+                    className="MultiFeaturePlotPane"
+                    key="multi-feature-plots-pane"
+                  >
+                    <PlotsMultiFeature
+                      // enrichment mapped into differential-style props
+                      differentialPlotTypes={enrichmentPlotTypes}
+                      differentialStudy={enrichmentStudy}
+                      differentialModel={enrichmentModel}
+                      differentialTest={enrichmentAnnotation}
+                      differentialTestIdsCommon={
+                        enrichmentAnnotationIdsCommon || []
+                      }
+                      modelSpecificMetaFeaturesExist={false}
+                      multiFeaturePlotTypes={
+                        enrichmentMultiFeaturePlotTypes || []
+                      }
+                      plotMultiFeatureData={plotMultiFeatureData}
+                      plotMultiFeatureDataLoaded={plotMultiFeatureDataLoaded}
+                      isLoading={
+                        !plotMultiFeatureDataLoaded &&
+                        (HighlightedProteins?.length || 0) >= 2
+                      }
+                      plotMultiFeatureDataLength={plotMultiFeatureDataLength}
+                      plotMultiFeatureMax={plotMultiFeatureMax}
+                      svgExportName={svgExportName}
+                      exportInTabHeader={true}
+                      exportPortalNode={this.state.featurePlotsExportPortalNode}
+                      exportPortalActive={activeSvgTabIndexEnrichment === 1}
+                      // unified dimensions for multi-feature (same as Differential)
+                      divWidth={multiContentWidth}
+                      divHeight={multiContentHeight}
+                      pointSize={12}
+                      pxToPtRatio={105}
+                      svgTabMax={1}
+                      tab={tab}
+                      upperPlotsVisible={true}
+                      showFullScreen={
+                        !!this.props
+                          .onGetMultifeaturePlotTransitionOverlayEnrichment
+                      }
+                      // selection syncing
+                      onHandleAllChecked={() => onHandleProteinSelected([])}
+                      onHandleHighlightedFeaturesDifferential={(arr) =>
+                        onHandleProteinSelected(arr)
+                      }
+                      onGetMultifeaturePlotTransitionAlt={
+                        this.props
+                          .onGetMultifeaturePlotTransitionOverlayEnrichment
+                      }
+                      // Interaction handlers
+                      onHandlePlotlyClick={
+                        this.props.onHandlePlotlyClickEnrichment
+                      }
+                      onRemoveSelectedFeature={
+                        this.props.onRemoveSelectedFeatureEnrichment
+                      }
+                      onMultiFeatureBullpenOpenChange={
+                        this.props.onMultiFeatureBullpenOpenChangeEnrichment
+                      }
+                      differentialHighlightedFeaturesData={
+                        transformedHighlightedFeatures
+                      }
+                      differentialTableData={tableData}
+                      differentialFeatureIdKey={featureIdKey}
+                    />
+                  </Tab.Pane>
+                ),
+              },
+            ]}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  render() {
+    const {
+      verticalSplitPaneSize,
+      horizontalSplitPaneSize,
+      verticalSplitPaneSizeCommitted,
+      horizontalSplitPaneSizeCommitted,
+      isSplitPaneDragging,
+    } = this.state;
+    const { enrichmentStudy, enrichmentModel, enrichmentPlotDescriptions } =
+      this.props;
+
+    const ViolinAndTable = this.getViolinAndTable();
+
+    const width =
+      window.innerWidth ||
+      document.documentElement.clientWidth ||
+      document.body.clientWidth;
+    const height =
+      window.innerHeight ||
+      document.documentElement.clientHeight ||
+      document.body.clientHeight;
+
+    const BarcodePlot = this.getBarcodePlot();
+
+    const featurePlotTabs = this.renderFeaturePlotTabs(
+      width,
+      height,
+      verticalSplitPaneSizeCommitted,
+      horizontalSplitPaneSizeCommitted,
+      enrichmentStudy,
+      enrichmentModel,
+      enrichmentPlotDescriptions,
+    );
+
+    return (
+      <div className="PlotsWrapper">
+        <Grid className="">
+          <Grid.Row className="ActionsRow">
+            <Grid.Column
+              mobile={16}
+              tablet={16}
+              computer={8}
+              largeScreen={8}
+              widescreen={8}
+            >
+              <EnrichmentBreadcrumbs {...this.props} />
+            </Grid.Column>
+
+            <Grid.Column
+              mobile={16}
+              tablet={16}
+              computer={8}
+              largeScreen={8}
+              widescreen={8}
+              className="elementTextCol"
+            ></Grid.Column>
+
+            <Grid.Column
+              mobile={16}
+              tablet={16}
+              largeScreen={16}
+              widescreen={16}
+            >
+              {/* Top: Barcode, Bottom: Violin+Table vs Right Plots */}
+              <SplitPane
+                className="ThreePlotsDiv SplitPanesWrapper"
+                split="horizontal"
+                size={horizontalSplitPaneSize}
+                minSize={185}
+                maxSize={400}
+                onChange={(size) => this.splitPaneDragging(size, 'horizontal')}
+                onDragFinished={(size) =>
+                  this.splitPaneResized(size, 'horizontal')
+                }
+              >
+                {BarcodePlot}
+
+                <SplitPane
+                  className="BottomSplitPaneContainer"
+                  split="vertical"
+                  size={verticalSplitPaneSize}
+                  minSize={315}
+                  maxSize={1300}
+                  onChange={(size) => this.splitPaneDragging(size, 'vertical')}
+                  onDragFinished={(size) =>
+                    this.splitPaneResized(size, 'vertical')
+                  }
+                >
+                  <div id="ViolinAndTableSplitContainer">{ViolinAndTable}</div>
+
+                  <div
+                    id="SVGSplitContainer"
+                    ref={this.svgSplitContainerRef}
+                    style={{
+                      overflow: isSplitPaneDragging ? 'hidden' : undefined,
+                    }}
+                  >
+                    {featurePlotTabs}
+                  </div>
+                </SplitPane>
+              </SplitPane>
+            </Grid.Column>
+          </Grid.Row>
+        </Grid>
+      </div>
+    );
+  }
+}
+
+export default withRouter(SplitPanesContainer);
